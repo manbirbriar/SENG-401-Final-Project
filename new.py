@@ -1,4 +1,5 @@
 from google import genai
+import json
 
 # Initialize the GenAI client
 client = genai.Client(api_key="AIzaSyAFZWyoJrn8P62z5Hb6uhrPKeCYLmCfUgs")
@@ -16,7 +17,9 @@ result = client.models.generate_content(
     contents=[
         myfile,
         "\n\n",
-        "Describe the photo",
+        "Given the photo, recommend changes for three sliders: contrast, saturation, and brightness (each with 10 levels). "
+        "Respond in JSON format with keys: 'contrast', 'saturation', and 'brightness', each having an integer value from 1 to 10. And key 'resp' with a string with reasoning for the values",
     ],
 )
-print(f"{result.text=}")
+
+print(result.text)
