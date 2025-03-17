@@ -23,7 +23,6 @@ def api_call(image_path: str, prompt: str, current_parameters: Parameter):
         'new_parameters': current_parameters
     }
 
-
 def main(page):
     page.title = "RAW Image Processor"
     # Window
