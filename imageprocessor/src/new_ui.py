@@ -7,6 +7,9 @@ import os
 import numpy as np
 from PIL import Image
 import threading
+import tempfile
+import base64
+
 
 APP_NAME = 'AI RAW Image Processor'
 
@@ -29,7 +32,7 @@ class ImageProcessorThread(threading.Thread):
         self.page = None
         self.raw_path = None
         self.params = None
-        self.image_control = None
+        self.image_container = None
         self.daemon = True  # Ensure the thread exits when the main program exits
         self.start()
 
@@ -37,7 +40,8 @@ class ImageProcessorThread(threading.Thread):
         while True:
             self.event.wait()  # Wait for the event to be set
             print('start')
-            update_image(self.page, self.raw_path, self.params, self.image_control)
+            update_image(self.page, self.raw_path, self.params, self.image_container)
+            self.page.update()
             print('end')
             self.event.clear()  # Clear the event after processing
 
@@ -45,7 +49,7 @@ class ImageProcessorThread(threading.Thread):
         print('process_image')
         self.raw_path = raw_path
         self.params = params
-        self.image_control = image_control
+        self.image_container = image_control
         self.event.set()  # Set the event to start processing
 
 # Usage example
@@ -101,7 +105,7 @@ def create_appbar(page):
     return library_page_button, edit_page_button
 
 
-def update_image(page, raw_path, params: Parameter, image_control=None):
+def update_image(page, raw_path, params: Parameter, image_control):
     with rawpy.imread(raw_path) as image:
         rgb_linear = image.postprocess(
             output_bps=8,
@@ -115,23 +119,26 @@ def update_image(page, raw_path, params: Parameter, image_control=None):
     # image = np.clip(image, 0, 1)
     # image = (image * 255).astype(np.uint8)
     image = Image.fromarray(rgb_linear, mode='RGB')
-    image.save(os.path.join(TEMP_DIR, 'temp.tif'))
-    if image_control is not None:
-        image_control.src = os.path.join(TEMP_DIR, 'temp.tif')
+    with tempfile.NamedTemporaryFile(delete=False, suffix='.tif') as temp_file:
+        temp_path = temp_file.name
+        # Save the image to the temporary file
+        image.save(temp_path, format='TIFF')
+    print(temp_path)
+    image_control.content = ft.Image(
+        src=temp_path,
+        fit=ft.ImageFit.CONTAIN,
+        gapless_playback=True
+    )
     page.update()
 
 
 def create_photo_area(page, raw_path, params):
-    img = ft.Image(
-            src=os.path.join(TEMP_DIR, 'temp.tif'),
-            fit=ft.ImageFit.CONTAIN,
-        )
-    image_processor_thread.process_image(raw_path, params, img)
-    return ft.Container(
+    img_container = ft.Container(
         width=page.width,
-        height=page.height,
-        content=img
+        height=page.height
     )
+    image_processor_thread.process_image(raw_path, params, img_container)
+    return img_container
 
 
 def create_control_area(page):
@@ -148,19 +155,19 @@ def create_control_area(page):
     return prompt_text_box, feedback_text_box, submit_button, compare_button, apply_button
 
 
-def onchange_parameter(e, current_param, text, raw_path, params, image_control, round_=None):
+def onchange_parameter(e, current_param, text, raw_path, params, img_container, round_=None):
     text.value = str(round(e.control.value, round_))
     params.__setattr__(current_param, e.control.value)
-    image_processor_thread.process_image(raw_path, params, image_control)
+    image_processor_thread.process_image(raw_path, params, img_container)
     e.page.update()
 
 
-def create_parameter_sliders(page, raw_path, image_control, params):
+def create_parameter_sliders(page, raw_path, img_container, params):
     height = 30
-
+    print(img_container)
     change_parameter_text_common_params = {
         'raw_path': raw_path,
-        'image_control': image_control,
+        'img_container': img_container,
         'params': params
     }
 
@@ -299,7 +306,7 @@ def main(page):
     (parameter_area,
     exposure_slider, contrast_slider, white_levels_slider, highlights_slider, shadows_slider, black_levels_slider,
     exposure_slider_value, contrast_slider_value, white_levels_slider_value, highlights_slider_value, shadows_slider_value, black_levels_slider_value
-     ) = create_parameter_sliders(page, raw_path, photo_area.content, params)
+     ) = create_parameter_sliders(page, raw_path, photo_area, params)
 
     # Edit area
     edit_area = ft.Column(
