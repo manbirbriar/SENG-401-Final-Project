@@ -7,11 +7,13 @@ import os
 import numpy as np
 from PIL import Image
 import threading
-import tempfile
 import base64
+from google import genai
+import json
 
 
 APP_NAME = 'AI RAW Image Processor'
+GOOGLE_AI_STUDIO_API_KEY = ""
 
 # Create persist and temp dirs
 sys_win = os.name == 'nt'
@@ -27,6 +29,7 @@ for i in (PERSIST_DIR, TEMP_DIR):
 
 # Global Variable
 need_update_image = False
+client = genai.Client(api_key=GOOGLE_AI_STUDIO_API_KEY)
 
 
 # Class
@@ -45,10 +48,16 @@ class RawImage:
     def adjust_exposure(image, stops):
         return image * (2 ** stops)
 
+    @staticmethod
+    def adjust_contrast(image, contrast, pivot=0.416):
+        contrast = contrast / 100 + 1
+        return (image - pivot) * contrast + pivot
+
     def render_image(self, params):
         # exposure
         image = self.adjust_exposure(self.raw_image, params.exposure)
         # contrast
+        image = self.adjust_contrast(image, params.contrast)
         # highlights, shadows
         # white_levels, black_levels
         # saturation
@@ -74,7 +83,6 @@ class RawImage:
         image = RawImage.srgb_gamma_correction(image)
         image = np.clip(image, 0, 1)
         image = (image * scale).astype(data_type)
-        print(image)
         Image.fromarray(image, mode='RGB').save(path)
 
 
@@ -130,7 +138,7 @@ class Parameter:
     black_levels = 0
     saturation = 0
 
-    def __init__(self, exposure, contrast, white_levels, highlights, shadows, black_levels, saturation):
+    def __init__(self, exposure=0, contrast=0, white_levels=0, highlights=0, shadows=0, black_levels=0, saturation=0):
         self.exposure = exposure
         self.contrast = contrast
         self.white_levels = white_levels
@@ -141,24 +149,50 @@ class Parameter:
 
 
 
-def api_call(image_path: str, prompt: str, current_parameters: Parameter):
+def api_call(prompt: str, current_parameters: Parameter):
     # Placeholder for API call
+    # Define a structured prompt
+    prompt = f"""Analyze this image: I want {prompt}; Current parameters are {{exposure: {current_parameters.exposure}, contrast: {current_parameters.contrast}, highlights: {current_parameters.highlights}}} and return a JSON object with the following fields:
+    {{
+      "improvement_suggestions": "A couple of sentences on how to improve the image.",
+      "contrast_adjustment": "An integer between -100 and 100 indicating the recommended contrast adjustment.",
+      "highlight_adjustment": "An integer between -100 and 100 indicating the recommended highlight adjustment.",
+      "exposure_adjustment": "An integer between -5 and 5 indicating the recommended stops of exposure adjustment."
+    }}
+    Ensure the response is valid JSON and nothing else.
+    """
+    Image.open(os.path.join(TEMP_DIR, 'temp.tif')).save(os.path.join(TEMP_DIR, 'temp.jpeg'))
+    image = Image.open(os.path.join(TEMP_DIR, 'temp.jpeg'))
+    # Generate structured response
+    response = client.models.generate_content(
+        model="gemini-2.0-flash",
+        contents=[image, prompt]
+    )
+    response = response.text.removeprefix('```json\n').removesuffix('\n```')
+    response = json.loads(response)
+    parameter = Parameter(
+        exposure=response['exposure_adjustment'],
+        contrast=response['contrast_adjustment'],
+        highlights=response['highlight_adjustment'],
+    )
     return {
         'success': 1,
-        'feedback': f"The adjustments looks good, xxx can be modified to improve the image.",
-        'new_parameters': current_parameters
+        'feedback': response['improvement_suggestions'],
+        'new_parameters': parameter
     }
 
 
 def create_appbar(page):
     # TODO: Add highlight for the current page
-    library_page_button = ft.TextButton(
-        text='Library'
+    library_page_button = ft.ElevatedButton(
+        text='Library',
+        on_click=lambda e: page.go("/library")
     )
-    edit_page_button = ft.TextButton(
-        text='Edit'
+    edit_page_button = ft.ElevatedButton(
+        text='Edit',
+        on_click=lambda e: page.go("/edit")
     )
-    page.appbar = ft.AppBar(
+    appbar = ft.AppBar(
         title=ft.Text('RAW Image Processor'),
         actions=[
             library_page_button,
@@ -166,7 +200,8 @@ def create_appbar(page):
         ],
         title_spacing=10
     )
-    return library_page_button, edit_page_button
+    appbar = ft.Row([library_page_button, edit_page_button])
+    return library_page_button, edit_page_button, appbar
 
 
 def create_photo_area(page, raw_path, params):
@@ -180,17 +215,24 @@ def create_photo_area(page, raw_path, params):
 
 
 def create_control_area(page):
+    status_description_box = ft.Text(value='Status')
+    status_text_box = ft.Text(value='Ready')
+    status_container = ft.Row(
+        controls=[
+            status_description_box,
+            status_text_box
+        ]
+    )
     prompt_text_box = ft.TextField(
         label='Prompt',
         multiline=True,
         # width=200
     )
     feedback_text_box = ft.Text()
-
     submit_button = ft.TextButton(text='Submit')
     compare_button = ft.TextButton(text='Compare')
     apply_button = ft.TextButton(text='Apply')
-    return prompt_text_box, feedback_text_box, submit_button, compare_button, apply_button
+    return status_text_box, status_container, prompt_text_box, feedback_text_box, submit_button, compare_button, apply_button
 
 
 def onchange_parameter(e, current_param, text, image_object, params, img_container, round_=None):
@@ -303,7 +345,35 @@ def create_param_object(exposure_slider, contrast_slider, white_levels_slider, h
     )
 
 
+def submit_button_click(
+        e, prompt_text_box, params, status_text_box, feedback_text_box,
+        exposure_slider, contrast_slider, highlights_slider,
+        exposure_slider_value, contrast_slider_value, highlights_slider_value,
+        image_object, img_container
+):
+    # Call API
+    status_text_box.value = 'Sending image to Google AI Studio'
+    e.page.update()
+    response = api_call(prompt_text_box.value, params)
+    if response['success']:
+        feedback_text_box.value = response['feedback']
+        new_params = response['new_parameters']
+        status_text_box.value = 'Success'
+        exposure_slider.value = new_params.exposure
+        exposure_slider_value.value = new_params.exposure
+        contrast_slider.value = new_params.contrast
+        contrast_slider_value.value = new_params.contrast
+        highlights_slider.value = new_params.highlights
+        highlights_slider_value.value = new_params.highlights
+        image_processor_thread.process_image(image_object, new_params, img_container)
+    else:
+        status_text_box.value = 'Failed'
+        feedback_text_box.value = 'Failed to process the image.'
+    e.page.update()
+
+
 def main(page):
+
     # temp
     raw_path = '/Users/ibobby/School/SENG401/SENG-401-Final-Project/sample_images/R62_0323.CR3'
     # app name
@@ -319,7 +389,7 @@ def main(page):
     page.window.left = 0
 
     # App bar
-    appbar_library_button, appbar_edit_button = create_appbar(page)
+    appbar_library_button, appbar_edit_button, appbar = create_appbar(page)
 
     params = Parameter(1, 0, 0, 0, 0, 0, 0)
     # Photo area
@@ -328,22 +398,30 @@ def main(page):
         raw_path,
         params=params
     )
+    # Parameter area
+    (parameter_area,
+     exposure_slider, contrast_slider, white_levels_slider, highlights_slider, shadows_slider, black_levels_slider,
+     exposure_slider_value, contrast_slider_value, white_levels_slider_value, highlights_slider_value,
+     shadows_slider_value, black_levels_slider_value
+     ) = create_parameter_sliders(page, image_object, photo_area, params)
 
     # Control area
-    prompt_text_box, feedback_text_box, submit_button, compare_button, apply_button = create_control_area(page)
+    status_text_box, status_container, prompt_text_box, feedback_text_box, submit_button, compare_button, apply_button = create_control_area(page)
+    submit_button.on_click = lambda e: submit_button_click(
+        e,
+        prompt_text_box, params, status_text_box, feedback_text_box,
+        exposure_slider, contrast_slider, highlights_slider,
+        exposure_slider_value, contrast_slider_value, highlights_slider_value,
+        image_object, photo_area
+    )
     control_button_area = ft.Row(
         [submit_button, compare_button, apply_button],
         alignment=ft.MainAxisAlignment.CENTER
     )
     control_area = ft.Column(
-        [prompt_text_box, feedback_text_box, control_button_area]
+        [status_container, prompt_text_box, feedback_text_box, control_button_area]
     )
 
-    # Parameter area
-    (parameter_area,
-    exposure_slider, contrast_slider, white_levels_slider, highlights_slider, shadows_slider, black_levels_slider,
-    exposure_slider_value, contrast_slider_value, white_levels_slider_value, highlights_slider_value, shadows_slider_value, black_levels_slider_value
-     ) = create_parameter_sliders(page, image_object, photo_area, params)
 
     # Edit area
     edit_area = ft.Column(
@@ -355,7 +433,20 @@ def main(page):
         [photo_area, edit_area],
         vertical_alignment=ft.CrossAxisAlignment.START
     )
-    page.add(main_area)
+    def route_change(route):
+        page.views.clear()
+        page.views.append(ft.View("/library", [appbar, parameter_area]))
+        if page.route == '/edit':
+            page.views.append(ft.View("/edit", [appbar, main_area]))
+        page.update()
+    def view_pop(view):
+        page.views.pop()
+        top_view = page.views[-1]
+        page.go(top_view.route)
+    page.on_route_change = route_change
+    page.on_view_pop = view_pop
+    page.go('/library')
+    page.go('/edit')
     page.update()
 
 ft.app(target=main)
