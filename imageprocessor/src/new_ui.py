@@ -119,15 +119,14 @@ def update_image(page, raw_path, params: Parameter, image_control):
     # image = np.clip(image, 0, 1)
     # image = (image * 255).astype(np.uint8)
     image = Image.fromarray(rgb_linear, mode='RGB')
-    with tempfile.NamedTemporaryFile(delete=False, suffix='.tif') as temp_file:
-        temp_path = temp_file.name
-        # Save the image to the temporary file
-        image.save(temp_path, format='TIFF')
-    print(temp_path)
+    temp_path = os.path.join(TEMP_DIR, 'temp.tif')
+    # Save the image to the temporary file
+    image.save(temp_path, format='TIFF')
+    with open(temp_path, 'rb') as f:
+        base64_str = base64.b64encode(f.read()).decode('utf-8')
     image_control.content = ft.Image(
-        src=temp_path,
-        fit=ft.ImageFit.CONTAIN,
-        gapless_playback=True
+        src_base64=base64_str,
+        fit=ft.ImageFit.CONTAIN
     )
     page.update()
 
