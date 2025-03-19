@@ -25,31 +25,95 @@ for i in (PERSIST_DIR, TEMP_DIR):
         os.makedirs(i)
 
 
+# Global Variable
+need_update_image = False
+
+
+# Class
+class RawImage:
+    def __init__(self, file_path):
+        self.raw_file = rawpy.imread(file_path)
+        self.raw_image = self.raw_file.postprocess(
+            use_camera_wb=True,
+            output_bps=16,
+            no_auto_bright=True,
+            gamma=(1, 1)
+        )
+        self.raw_image = self.raw_image.astype(np.float32) / 65535.0
+
+    @staticmethod
+    def adjust_exposure(image, stops):
+        return image * (2 ** stops)
+
+    def render_image(self, params):
+        # exposure
+        image = self.adjust_exposure(self.raw_image, params.exposure)
+        # contrast
+        # highlights, shadows
+        # white_levels, black_levels
+        # saturation
+        return image
+
+    @staticmethod
+    def srgb_gamma_correction(image):
+        mask = image <= 0.0031308
+        corrected = np.empty_like(image)
+        corrected[mask] = 12.92 * image[mask]
+        corrected[~mask] = 1.055 * (image[~mask] ** (1 / 2.4)) - 0.055
+        return corrected
+
+
+    @staticmethod
+    def save_image(image, path, bit_depth=8):
+        if path.lower().endswith(('.png', '.tif', '.tiff')) and bit_depth == 16:
+            data_type = np.uint16
+            scale = 65535
+        else:
+            data_type = np.uint8
+            scale = 255
+        image = RawImage.srgb_gamma_correction(image)
+        image = np.clip(image, 0, 1)
+        image = (image * scale).astype(data_type)
+        print(image)
+        Image.fromarray(image, mode='RGB').save(path)
+
+
 class ImageProcessorThread(threading.Thread):
+    page = None
+    image_object = None
+    params = None
+    image_container = None
+
     def __init__(self):
         super().__init__()
         self.event = threading.Event()
-        self.page = None
-        self.raw_path = None
-        self.params = None
-        self.image_container = None
         self.daemon = True  # Ensure the thread exits when the main program exits
         self.start()
 
     def run(self):
+        global need_update_image
         while True:
             self.event.wait()  # Wait for the event to be set
-            print('start')
-            update_image(self.page, self.raw_path, self.params, self.image_container)
-            self.page.update()
-            print('end')
+            while need_update_image:
+                need_update_image = False
+                image = self.image_object.render_image(self.params)
+                temp_path = os.path.join(TEMP_DIR, 'temp.tif')
+                self.image_object.save_image(image, temp_path)
+                with open(temp_path, 'rb') as f:
+                    base64_str = base64.b64encode(f.read()).decode('utf-8')
+                if self.image_container.content is None:
+                    self.image_container.content = ft.Image(src_base64=base64_str)
+                else:
+                    self.image_container.content.src_base64 = base64_str
+                self.page.update()
             self.event.clear()  # Clear the event after processing
 
-    def process_image(self, raw_path, params, image_control):
-        print('process_image')
-        self.raw_path = raw_path
+    def process_image(self, image_object: RawImage, params, image_container):
+        self.image_object = image_object
         self.params = params
-        self.image_container = image_control
+        self.image_container = image_container
+        global need_update_image
+        need_update_image = True
         self.event.set()  # Set the event to start processing
 
 # Usage example
@@ -105,39 +169,14 @@ def create_appbar(page):
     return library_page_button, edit_page_button
 
 
-def update_image(page, raw_path, params: Parameter, image_control):
-    with rawpy.imread(raw_path) as image:
-        rgb_linear = image.postprocess(
-            output_bps=8,
-            no_auto_bright=True,
-            use_camera_wb=True,
-            bright=params.exposure,
-            gamma=(1, 1)
-        )
-    # save image with PIL
-    # image = rgb_linear.astype(np.float32) / 65535.0
-    # image = np.clip(image, 0, 1)
-    # image = (image * 255).astype(np.uint8)
-    image = Image.fromarray(rgb_linear, mode='RGB')
-    temp_path = os.path.join(TEMP_DIR, 'temp.tif')
-    # Save the image to the temporary file
-    image.save(temp_path, format='TIFF')
-    with open(temp_path, 'rb') as f:
-        base64_str = base64.b64encode(f.read()).decode('utf-8')
-    image_control.content = ft.Image(
-        src_base64=base64_str,
-        fit=ft.ImageFit.CONTAIN
-    )
-    page.update()
-
-
 def create_photo_area(page, raw_path, params):
     img_container = ft.Container(
         width=page.width,
         height=page.height
     )
-    image_processor_thread.process_image(raw_path, params, img_container)
-    return img_container
+    image_object = RawImage(raw_path)
+    image_processor_thread.process_image(image_object, params, img_container)
+    return image_object, img_container
 
 
 def create_control_area(page):
@@ -154,18 +193,17 @@ def create_control_area(page):
     return prompt_text_box, feedback_text_box, submit_button, compare_button, apply_button
 
 
-def onchange_parameter(e, current_param, text, raw_path, params, img_container, round_=None):
+def onchange_parameter(e, current_param, text, image_object, params, img_container, round_=None):
     text.value = str(round(e.control.value, round_))
     params.__setattr__(current_param, e.control.value)
-    image_processor_thread.process_image(raw_path, params, img_container)
+    image_processor_thread.process_image(image_object, params, img_container)
     e.page.update()
 
 
-def create_parameter_sliders(page, raw_path, img_container, params):
+def create_parameter_sliders(page, image_object, img_container, params):
     height = 30
-    print(img_container)
     change_parameter_text_common_params = {
-        'raw_path': raw_path,
+        'image_object': image_object,
         'img_container': img_container,
         'params': params
     }
@@ -285,7 +323,7 @@ def main(page):
 
     params = Parameter(1, 0, 0, 0, 0, 0, 0)
     # Photo area
-    photo_area = create_photo_area(
+    image_object, photo_area = create_photo_area(
         page,
         raw_path,
         params=params
@@ -305,7 +343,7 @@ def main(page):
     (parameter_area,
     exposure_slider, contrast_slider, white_levels_slider, highlights_slider, shadows_slider, black_levels_slider,
     exposure_slider_value, contrast_slider_value, white_levels_slider_value, highlights_slider_value, shadows_slider_value, black_levels_slider_value
-     ) = create_parameter_sliders(page, raw_path, photo_area, params)
+     ) = create_parameter_sliders(page, image_object, photo_area, params)
 
     # Edit area
     edit_area = ft.Column(
