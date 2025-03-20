@@ -1,0 +1,6 @@
+flet
+pillow
+google-genai
+numpy
+python-dotenv
+rawpy
