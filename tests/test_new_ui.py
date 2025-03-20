@@ -48,7 +48,7 @@ def test_adjust_contrast():
     expected = np.array([[0.583, 0.583], [0.583, 0.583]], dtype=np.float32)
     assert np.allclose(result, expected, rtol=1e-3, atol=1e-3), "Contrast adjustment does not match expected result"
 
-def test_parameter_initialization():
+def test_init_():
     params = Parameter()
     assert params.exposure == 0, "Default exposure should be 0"
     assert params.contrast == 0, "Default contrast should be 0"
