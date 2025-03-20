@@ -42,3 +42,11 @@ def test_adjust_exposure():
     assert np.array_equal(result, expected), "Exposure adjustment does not match expected result"
 
 
+def test_adjust_contrast():
+    dummy_image = np.array([[0.5, 0.5], [0.5, 0.5]], dtype=np.float32)
+    result = RawImage.adjust_contrast(dummy_image, 100)  # Increase contrast by 100%
+    expected = np.array([[0.583, 0.583], [0.583, 0.583]], dtype=np.float32)
+    assert np.allclose(result, expected, rtol=1e-3, atol=1e-3), "Contrast adjustment does not match expected result"
+
+
+
