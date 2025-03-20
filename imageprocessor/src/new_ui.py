@@ -11,11 +11,16 @@ import threading
 import base64
 from google import genai
 import json
-
 from setuptools.extension import Library
+from dotenv import load_dotenv
+
+load_dotenv()
+API_KEY = os.getenv("MY_API_KEY")
 
 APP_NAME = 'AI RAW Image Processor'
-GOOGLE_AI_STUDIO_API_KEY = ""
+
+GOOGLE_AI_STUDIO_API_KEY = API_KEY
+
 RAW_EXTENSIONS = [
     'dng',  # Apple, Casio, DJI, DxO, Google, GoPro, Hasselblad, Huawei, Leica, LG, Light, Motorola, Nokia, OnePlus, OPPO, Parrot, Pentax, Pixii, Ricoh, Samsung, Sigma, Skydio, Sony, Xiaomi, Yuneec, Zeiss
     'tif',  # Canon, Mamiya, Phase One
