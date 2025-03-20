@@ -1,181 +1,433 @@
-import flet as ft
-import sqlite3
 import os
-import numpy as np
-from PIL import Image
+import shutil
 
-# Database setup
-DB_FILE = "images.db"
+import flet as ft
 
-def init_db():
-    """Initialize database and create table if not exists."""
-    conn = sqlite3.connect(DB_FILE)
-    cursor = conn.cursor()
-    cursor.execute('''
-        CREATE TABLE IF NOT EXISTS images (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            path TEXT UNIQUE NOT NULL
+from config import *
+from ImageProcessing import RawImage, EmptyImage, ImageProcessorThread, Parameter, create_thumbnail
+import directory_management
+from data import Database
+import ai_integration
+
+# Create persist and temp dirs
+PERSIST_DIR = directory_management.create_persist_dir()
+TEMP_DIR = directory_management.create_temp_dir()
+
+# Global Variable
+need_update_image = False
+image_processor_thread = ImageProcessorThread()
+
+
+def create_photo_area(page, raw_path, params):
+    img_container = ft.Container(
+        width=page.width,
+        height=page.height
+    )
+    if raw_path is None:
+        image_object = EmptyImage()
+    else:
+        image_object = RawImage(raw_path)
+        image_processor_thread.process_image(image_object, params, img_container)
+    return image_object, img_container
+
+
+def create_control_area(page):
+    status_description_box = ft.Text(value='Status:')
+    status_text_box = ft.Text(value='Ready')
+    status_container = ft.Row(
+        controls=[
+            status_description_box,
+            status_text_box
+        ]
+    )
+    prompt_text_box = ft.TextField(
+        label='Prompt',
+        multiline=True,
+        # width=200
+    )
+    feedback_text_box = ft.Text()
+    submit_button = ft.TextButton(text='Submit')
+    compare_button = ft.TextButton(text='Compare')
+    apply_button = ft.TextButton(text='Apply')
+    return status_text_box, status_container, prompt_text_box, feedback_text_box, submit_button, compare_button, apply_button
+
+
+def create_param_object(exposure_slider, contrast_slider, white_levels_slider, highlights_slider, shadows_slider, black_levels_slider, saturation_slider):
+    return Parameter(
+        exposure=2**exposure_slider.value,
+        contrast=contrast_slider.value,
+        white_levels=white_levels_slider.value,
+        highlights=highlights_slider.value,
+        shadows=shadows_slider.value,
+        black_levels=black_levels_slider.value,
+        saturation=saturation_slider.value
+    )
+
+
+def submit_button_click(
+        e, prompt_text_box, params, status_text_box, feedback_text_box,
+        exposure_slider, contrast_slider, highlights_slider,
+        exposure_slider_value, contrast_slider_value, highlights_slider_value,
+        image_object, img_container
+):
+    # Call API
+    status_text_box.value = 'Sending image to Google AI Studio'
+    e.page.update()
+    response = ai_integration.api_call(prompt_text_box.value, params)
+    if response['success']:
+        feedback_text_box.value = response['feedback']
+        new_params = response['new_parameters']
+        status_text_box.value = 'Success'
+        exposure_slider.value = new_params.exposure
+        exposure_slider_value.value = new_params.exposure
+        contrast_slider.value = new_params.contrast
+        contrast_slider_value.value = new_params.contrast
+        highlights_slider.value = new_params.highlights
+        highlights_slider_value.value = new_params.highlights
+        image_processor_thread.process_image(image_object, new_params, img_container)
+    else:
+        status_text_box.value = 'Failed'
+        feedback_text_box.value = 'Failed to process the image.'
+    e.page.update()
+
+
+database = Database()
+def main(page):
+    # library
+    image_paths = {}
+    # edit
+    global image_object
+    image_object = EmptyImage()
+    params = Parameter()
+    photo_area = None
+
+    def export_button_click(e, image_id):
+        image_path = image_paths[image_id]
+        # TODO: check if raw image exists, pop up alert if not
+        params_sql = database.execute('SELECT exposure, contrast, white_levels, highlights, shadows, black_levels, saturation FROM images WHERE id = ?', (image_id,)).fetchone()
+        params = Parameter(*params_sql)
+        image_object = RawImage(image_path)
+        image = image_object.render_image(params)
+        image_object.save_image(image, image_path+'.jpg')
+        e.page.update()
+
+    def delete_button_click(e, image_id):
+        os.remove(os.path.join(PERSIST_DIR, 'thumbnails', str(image_id) + '.jpg'))
+        database.delete('images', 'id = ?', (image_id,))
+        # remove from library view
+        image_id = str(image_id)
+        for control in image_grid.controls:
+            if control.key == image_id:
+                image_grid.controls.remove(control)
+                break
+        e.page.update()
+
+    def create_image_selector_in_library(image_id):
+        thumbnail_path = os.path.join(PERSIST_DIR, 'thumbnails', str(image_id) + '.jpg')
+        edit_button = ft.ElevatedButton(
+            text='Edit',
+            on_click=lambda e: open_edit_tab(page, image_id)
         )
-    ''')
-    conn.commit()
-    conn.close()
-
-def insert_image(path):
-    """Insert image path into the database."""
-    conn = sqlite3.connect(DB_FILE)
-    cursor = conn.cursor()
-    cursor.execute("INSERT OR IGNORE INTO images (path) VALUES (?)", (path,))
-    conn.commit()
-    conn.close()
-
-def get_images():
-    """Retrieve all stored image paths."""
-    conn = sqlite3.connect(DB_FILE)
-    cursor = conn.cursor()
-    cursor.execute("SELECT path FROM images")
-    images = [row[0] for row in cursor.fetchall()]
-    conn.close()
-    return images
-
-# Image Processing Functions
-def adjust_exposure_by_stop(image: np.ndarray, stops: float) -> np.ndarray:
-    """Adjust exposure by given number of stops."""
-    return np.clip(image * (2.0 ** stops), 0, 1)
-
-def adjust_contrast(image: np.ndarray, contrast: float, pivot: float = 0.416) -> np.ndarray:
-    """Adjust contrast."""
-    return np.clip((image - pivot) * (1 + contrast) + pivot, 0, 1)
-
-# Global variables
-current_image = None
-
-def main(page: ft.Page):
-    page.title = "Image Processing App"
-    page.padding = 20
-
-    global current_image
-
-    # Initialize database
-    init_db()
-
-    # UI components
-    uploaded_image = ft.Image(width=400, height=400, border_radius=10, fit=ft.ImageFit.CONTAIN)
-
-    # Sliders
-    exposure_slider = ft.Slider(min=-100, max=100, value=0, label="Exposure")
-    contrast_slider = ft.Slider(min=-100, max=100, value=0, label="Contrast")
-
-    def reset_sliders():
-        """Reset all sliders to default value (0)."""
-        exposure_slider.value = 0
-        contrast_slider.value = 0
-        page.update()
-
-    def upload_image(e: ft.FilePickerResultEvent):
-        """Handles image upload, saves path to database, and resets sliders."""
-        global current_image
-        if e.files:
-            file_path = e.files[0].path
-            insert_image(file_path)  # Store in database
-            current_image = file_path  # Set as active image
-            uploaded_image.src = file_path
-            page.update()
-            reset_sliders()
-
-    def apply_edits(e):
-        """Applies exposure and contrast adjustments to the image."""
-        global current_image
-        if current_image:
-            image = Image.open(current_image).convert("RGB")
-            np_image = np.array(image) / 255.0  # Normalize to [0, 1]
-
-            # Apply exposure adjustment
-            exposure_stops = exposure_slider.value / 100.0
-            adjusted_image = adjust_exposure_by_stop(np_image, exposure_stops)
-
-            # Apply contrast adjustment
-            contrast_value = contrast_slider.value / 100.0
-            adjusted_image = adjust_contrast(adjusted_image, contrast_value)
-
-            # Convert back to image format and save
-            updated_image = Image.fromarray((adjusted_image * 255).astype(np.uint8))
-            updated_image.save(current_image)  # Overwrite with edits
-
-            # Update UI
-            uploaded_image.src = current_image
-            page.update()
-            print(np_image)
-            print(exposure_stops)
-            print(contrast_value)
-
-    file_picker = ft.FilePicker(on_result=upload_image)
-    page.overlay.append(file_picker)
-
-    upload_button = ft.ElevatedButton("Upload Image", on_click=lambda _: file_picker.pick_files(allow_multiple=False))
-    compare_button = ft.ElevatedButton("Compare")
-    library_button = ft.ElevatedButton("Library", on_click=lambda _: page.go("/gallery"))
-    submit_button = ft.ElevatedButton("Submit & Apply", on_click=apply_edits)
-
-    def editor_view():
-        uploaded_image.src = current_image if current_image else None
-        return ft.Row(
-            [
-                ft.Column(
-                    [
-                        uploaded_image,
-                        upload_button,
-                        exposure_slider,
-                        contrast_slider,
+        export_button = ft.TextButton(
+            text='Export',
+            on_click=lambda e: export_button_click(e, image_id),
+        )
+        delete_button = ft.TextButton(
+            text='Delete',
+            on_click=lambda e: delete_button_click(e, image_id)
+        )
+        return ft.Column(
+            key=str(image_id),
+            controls=[
+                ft.Image(src=thumbnail_path, width=200, height=200),
+                ft.Row(
+                    controls=[
+                        edit_button,
+                        export_button,
+                        delete_button
                     ],
-                    expand=True,
-                    alignment=ft.MainAxisAlignment.START,
-                ),
-                ft.Column(
-                    [
-                        compare_button,
-                        library_button,
-                        submit_button,
-                    ],
-                    expand=True,
-                    alignment=ft.MainAxisAlignment.CENTER,
+                    alignment=ft.MainAxisAlignment.CENTER
                 ),
             ],
-            expand=True,
+            alignment=ft.MainAxisAlignment.CENTER,
+            horizontal_alignment=ft.CrossAxisAlignment.CENTER,
         )
 
-    page.views.append(ft.View("/", [editor_view()]))
+    def file_selected(e):
+        if not e.files:
+            return
+        file_path = [_.path for _ in e.files]
+        # save to database
+        ids, new_images = database.import_image(file_path)
+        for new_image_path, id_ in zip(new_images, ids):
+            # create thumbnails
+            create_thumbnail(new_image_path, os.path.join(PERSIST_DIR, 'thumbnails', str(id_) + '.jpg'))
+            # add to image_paths
+            image_paths[id_] = new_image_path
+            # add image to library page
+            image_grid.controls.append(create_image_selector_in_library(id_))
+        # switch to library page
+        page.go('/library')
+        e.page.update()
 
-    def gallery_view(page):
-        grid = ft.GridView(expand=True, max_extent=150, child_aspect_ratio=1, spacing=10, run_spacing=10)
+    def open_edit_tab(page, image_id):
+        global image_object
+        image_path = database.execute('SELECT path FROM images WHERE id = ?', (image_id,)).fetchone()
+        if image_path is None:
+            # TODO: alert
+            return
+        image_path = image_path[0]
+        image_object = RawImage(image_path)
+        exposure, contrast, white_levels, highlights, shadows, black_levels, saturation = database.execute(
+            'SELECT exposure, contrast, white_levels, highlights, shadows, black_levels, saturation FROM images WHERE id = ?',
+            (image_id,)).fetchone()
+        params = Parameter(
+            exposure=exposure,
+            contrast=contrast,
+            white_levels=white_levels,
+            highlights=highlights,
+            shadows=shadows,
+            black_levels=black_levels,
+        )
+        page.go('/edit')
+        processed_image = image_processor_thread.process_image(image_object, params, photo_area)
+        return image_object, processed_image
 
-        def select_image(image_path):
-            global current_image
-            current_image = image_path
-            uploaded_image.src = image_path
-            page.update()
-            reset_sliders()
-            page.go("/")
+    def onchange_parameter(e, current_param, text, params, img_container, round_=None):
+        text.value = str(round(e.control.value, round_))
+        params.__setattr__(current_param, e.control.value)
+        image_processor_thread.process_image(image_object, params, img_container)
+        e.page.update()
 
-        for img_path in get_images():  # Get stored images from database
-            if os.path.exists(img_path):  # Ensure file still exists
-                img_container = ft.GestureDetector(
-                    content=ft.Image(src=img_path, width=150, height=150, fit=ft.ImageFit.CONTAIN),
-                    on_tap=lambda e, img_path=img_path: select_image(img_path)
-                )
-                grid.controls.append(img_container)
+    def create_parameter_sliders(img_container):
+        height = 30
+        change_parameter_text_common_params = {
+            'img_container': img_container,
+            'params': params
+        }
 
-        back_button = ft.ElevatedButton("Back", on_click=lambda _: page.go("/"))
-        page.views.append(ft.View("/gallery", [back_button, grid]))
+        exposure_text = ft.Text('Exposure', height=height)
+        exposure_slider_value = ft.Text('0', height=height)
+        exposure_slider = ft.Slider(
+            label='Exposure',
+            min=-5,
+            max=5,
+            value=0,
+            height=height,
+            on_change=lambda e: onchange_parameter(e, 'exposure', exposure_slider_value,
+                                                   **change_parameter_text_common_params, round_=2),
+        )
 
+        common_params = {
+            'min': -100,
+            'max': 100,
+            'value': 0,
+            'height': height
+        }
+        contrast_text = ft.Text('Contrast', height=height)
+        contrast_slider = ft.Slider(
+            **common_params,
+            on_change=lambda e: onchange_parameter(e, 'contrast', contrast_slider_value,
+                                                   **change_parameter_text_common_params)
+        )
+        contrast_slider_value = ft.Text('0', height=height)
+
+        white_levels_text = ft.Text('White Levels', height=height)
+        white_levels_slider = ft.Slider(
+            **common_params,
+            on_change=lambda e: onchange_parameter(e, 'white_levels', white_levels_slider_value,
+                                                   **change_parameter_text_common_params)
+        )
+        white_levels_slider_value = ft.Text('0', height=height)
+
+        highlights_text = ft.Text('Highlights', height=height)
+        highlights_slider = ft.Slider(
+            **common_params,
+            on_change=lambda e: onchange_parameter(e, 'highlights', highlights_slider_value,
+                                                   **change_parameter_text_common_params)
+        )
+        highlights_slider_value = ft.Text('0', height=height)
+
+        shadows_text = ft.Text('Shadows', height=height)
+        shadows_slider = ft.Slider(
+            **common_params,
+            on_change=lambda e: onchange_parameter(e, 'shadows', shadows_slider_value,
+                                                   **change_parameter_text_common_params)
+        )
+        shadows_slider_value = ft.Text('0', height=height)
+
+        black_levels_text = ft.Text('Black Levels', height=height)
+        black_levels_slider = ft.Slider(
+            **common_params,
+            on_change=lambda e: onchange_parameter(e, 'black_levels', black_levels_slider_value,
+                                                   **change_parameter_text_common_params)
+        )
+        black_levels_slider_value = ft.Text('0', height=height)
+
+        saturation_text = ft.Text('Saturation', height=height)
+        saturation_slider = ft.Slider(
+            **common_params,
+            on_change=lambda e: onchange_parameter(e, 'saturation', saturation_slider_value,
+                                                   **change_parameter_text_common_params)
+        )
+        saturation_slider_value = ft.Text('0', height=height)
+
+        # Create columns
+        name_column = ft.Column(
+            [exposure_text, contrast_text, white_levels_text, highlights_text, shadows_text, black_levels_text,
+             saturation_text],
+            width=90,
+            alignment=ft.MainAxisAlignment.START
+        )
+        slider_column = ft.Column(
+            [exposure_slider, contrast_slider, white_levels_slider, highlights_slider, shadows_slider,
+             black_levels_slider, saturation_slider],
+        )
+        value_column = ft.Column(
+            [exposure_slider_value, contrast_slider_value, white_levels_slider_value, highlights_slider_value,
+             shadows_slider_value, black_levels_slider_value, saturation_slider_value],
+            width=40,
+        )
+
+        parameter_area = ft.Row(
+            [name_column, slider_column, value_column],
+        )
+        return (
+            parameter_area,
+            exposure_slider, contrast_slider, white_levels_slider, highlights_slider, shadows_slider,
+            black_levels_slider,
+            exposure_slider_value, contrast_slider_value, white_levels_slider_value, highlights_slider_value,
+            shadows_slider_value, black_levels_slider_value
+        )
+
+    # Database
+    # database.drop('images')
+    database.execute('''
+        CREATE TABLE IF NOT EXISTS images (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            path TEXT UNIQUE NOT NULL,
+            exposure FLOAT DEFAULT 0,
+            contrast INTEGER DEFAULT 0,
+            white_levels INTEGER DEFAULT 0,
+            highlights INTEGER DEFAULT 0,
+            shadows INTEGER DEFAULT 0,
+            black_levels INTEGER DEFAULT 0,
+            saturation INTEGER DEFAULT 0
+        )
+    ''')
+    database.execute('''
+        CREATE TABLE IF NOT EXISTS CONFIG (
+        key TEXT NOT NULL PRIMARY KEY,
+        value TEXT
+        )
+    ''')
+    database.commit()
+
+    # app name
+    page.title = APP_NAME
+    # setup thread
+    image_processor_thread.page = page
+    # Window
+    page.window.width = 1250
+    page.window.height = 1000
+    # page.window.min_height = 400
+    # page.window.min_width = 1215
+    page.window.top = 0
+    page.window.left = 0
+
+    # App bar
+    library_page_button = ft.ElevatedButton(
+        text='Library',
+        on_click=lambda e: page.go("/library")
+    )
+    # Photo area
+    image_object, photo_area = create_photo_area(
+        page,
+        None,
+        params=params
+    )
+    # Parameter area
+    (parameter_area,
+     exposure_slider, contrast_slider, white_levels_slider, highlights_slider, shadows_slider, black_levels_slider,
+     exposure_slider_value, contrast_slider_value, white_levels_slider_value, highlights_slider_value,
+     shadows_slider_value, black_levels_slider_value
+     ) = create_parameter_sliders(photo_area)
+
+    # Control area
+    status_text_box, status_container, prompt_text_box, feedback_text_box, submit_button, compare_button, apply_button = create_control_area(page)
+    submit_button.on_click = lambda e: submit_button_click(
+        e,
+        prompt_text_box, params, status_text_box, feedback_text_box,
+        exposure_slider, contrast_slider, highlights_slider,
+        exposure_slider_value, contrast_slider_value, highlights_slider_value,
+        image_object, photo_area
+    )
+    control_button_area = ft.Row(
+        [submit_button, compare_button, apply_button],
+        alignment=ft.MainAxisAlignment.CENTER
+    )
+    control_area = ft.Column(
+        [status_container, prompt_text_box, feedback_text_box, control_button_area]
+    )
+
+    # Edit area
+    edit_area = ft.Column(
+        [control_area, parameter_area],
+        width=400
+    )
+    # Main area
+    edit_page = ft.Column(
+        controls=[
+            library_page_button,
+            ft.Row(
+                [photo_area, edit_area],
+                vertical_alignment=ft.CrossAxisAlignment.START
+            )
+        ]
+    )
+    # Library
+    input_file_picker = ft.FilePicker(
+        on_result=file_selected,
+    )
+    import_button = ft.TextButton(
+        text='Import Image',
+        on_click=lambda e: input_file_picker.pick_files(allow_multiple=True, allowed_extensions=RAW_EXTENSIONS)
+    )
+    image_grid = ft.GridView(
+        expand=1,
+        runs_count=5,
+        max_extent=250,
+        child_aspect_ratio=1.0,
+        spacing=5,
+        run_spacing=5,
+    )
+    images_to_load = database.select('images', ['id', 'path'],)
+    for i in images_to_load:
+        image_paths[i[0]] = i[1]
+        image_grid.controls.append(create_image_selector_in_library(i[0]))
+    library_page = ft.Column([
+        import_button, input_file_picker,
+        image_grid
+    ])
+    # image_grid.controls.append()
     def route_change(route):
         page.views.clear()
-        if page.route == "/gallery":
-            gallery_view(page)
-        else:
-            page.views.append(ft.View("/", [editor_view()]))
+        page.views.append(ft.View("/library", [library_page]))
+        if page.route == '/edit':
+            page.views.append(ft.View("/edit", [edit_page]))
         page.update()
-
+    def view_pop(view):
+        page.views.pop()
+        top_view = page.views[-1]
+        page.go(top_view.route)
     page.on_route_change = route_change
-    page.go(page.route)
+    page.on_view_pop = view_pop
+    page.go('/library')
+    last_opened = database.execute('SELECT value FROM CONFIG WHERE key = "last_opened"').fetchone()
+    if last_opened is not None:
+        last_opened_id = last_opened[0]
+        image_object, _ = open_edit_tab(page, last_opened_id)
+    page.update()
 
-ft.app(target=main, view=ft.WEB_BROWSER)
+ft.app(target=main)
+shutil.rmtree(TEMP_DIR)
