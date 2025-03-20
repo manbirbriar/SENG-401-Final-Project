@@ -33,3 +33,12 @@ def test_create_control_area():
     assert prompt_text_box.label == 'Prompt', "Prompt text box label should be 'Prompt'"
     assert prompt_text_box.multiline is True, "Prompt text box should be multiline"
     assert status_text_box.value == 'Ready', "Initial text of status text box should be 'Ready'"
+
+
+def test_adjust_exposure():
+    dummy_image = np.array([[0.5, 0.5], [0.5, 0.5]], dtype=np.float32)
+    result = RawImage.adjust_exposure(dummy_image, 1)  # Increase exposure by 1 stop
+    expected = np.array([[1.0, 1.0], [1.0, 1.0]], dtype=np.float32)
+    assert np.array_equal(result, expected), "Exposure adjustment does not match expected result"
+
+
