@@ -1,6 +1,7 @@
 import time
 import shutil
 import flet as ft
+import numpy
 import rawpy
 import sqlite3
 import os
@@ -11,9 +12,33 @@ import base64
 from google import genai
 import json
 
+from setuptools.extension import Library
 
 APP_NAME = 'AI RAW Image Processor'
 GOOGLE_AI_STUDIO_API_KEY = ""
+RAW_EXTENSIONS = [
+    'dng',  # Apple, Casio, DJI, DxO, Google, GoPro, Hasselblad, Huawei, Leica, LG, Light, Motorola, Nokia, OnePlus, OPPO, Parrot, Pentax, Pixii, Ricoh, Samsung, Sigma, Skydio, Sony, Xiaomi, Yuneec, Zeiss
+    'tif',  # Canon, Mamiya, Phase One
+    'crw', 'cr2', 'cr3',  # Canon
+    'raw',  # Contax, Kodak, Leica, Panasonic
+    'erf',  # Epson
+    'raf',  # Fujifilm
+    'gpr',  # GoPro
+    '3fr', 'fff',  # Hasselblad
+    'arw',  # Hasselblad, Sony
+    'dcr', 'kdc',  # Kodak
+    'mrw',  # Konica Minolta
+    'mos',  # Leaf, Mamiya
+    'iiq',  # Leaf, Mamiya, Phase One
+    'rwl',  # Leica
+    'mef', 'mfw',  # Mamiya
+    'nef', 'nrw', 'nefx',  # Nikon
+    'orf',  # OM Digital Solutions, Olympus
+    'rw2',  # Panasonic
+    'pef',  # Pentax
+    'srw',  # Samsung
+    'x3f',  # Sigma
+]
 
 # Create persist and temp dirs
 sys_win = os.name == 'nt'
@@ -22,7 +47,7 @@ if sys_win:  # Windows
 else:  # macOS/Linux
     PERSIST_DIR = os.path.join(os.path.expanduser("~"), ".config", APP_NAME)
 TEMP_DIR = os.path.join(PERSIST_DIR, 'temp')
-for i in (PERSIST_DIR, TEMP_DIR):
+for i in (PERSIST_DIR, TEMP_DIR, os.path.join(PERSIST_DIR, 'thumbnails')):
     if not os.path.exists(i):
         os.makedirs(i)
 
@@ -35,13 +60,13 @@ client = genai.Client(api_key=GOOGLE_AI_STUDIO_API_KEY)
 # Class
 class RawImage:
     def __init__(self, file_path):
-        self.raw_file = rawpy.imread(file_path)
-        self.raw_image = self.raw_file.postprocess(
-            use_camera_wb=True,
-            output_bps=16,
-            no_auto_bright=True,
-            gamma=(1, 1)
-        )
+        with rawpy.imread(file_path) as raw_file:
+            self.raw_image = raw_file.postprocess(
+                use_camera_wb=True,
+                output_bps=16,
+                no_auto_bright=True,
+                gamma=(1, 1)
+            )
         self.raw_image = self.raw_image.astype(np.float32) / 65535.0
 
     @staticmethod
@@ -84,6 +109,11 @@ class RawImage:
         image = np.clip(image, 0, 1)
         image = (image * scale).astype(data_type)
         Image.fromarray(image, mode='RGB').save(path)
+
+
+class EmptyImage(RawImage):
+    def __init__(self):
+        self.raw_image = numpy.zeros((256, 256, 3), dtype=numpy.float32)
 
 
 class ImageProcessorThread(threading.Thread):
@@ -157,7 +187,7 @@ def api_call(prompt: str, current_parameters: Parameter):
       "improvement_suggestions": "A couple of sentences on how to improve the image.",
       "contrast_adjustment": "An integer between -100 and 100 indicating the recommended contrast adjustment.",
       "highlight_adjustment": "An integer between -100 and 100 indicating the recommended highlight adjustment.",
-      "exposure_adjustment": "An integer between -5 and 5 indicating the recommended stops of exposure adjustment."
+      "exposure_adjustment": "An float number between -5 and 5 indicating the recommended stops of exposure adjustment."
     }}
     Ensure the response is valid JSON and nothing else.
     """
@@ -182,40 +212,21 @@ def api_call(prompt: str, current_parameters: Parameter):
     }
 
 
-def create_appbar(page):
-    # TODO: Add highlight for the current page
-    library_page_button = ft.ElevatedButton(
-        text='Library',
-        on_click=lambda e: page.go("/library")
-    )
-    edit_page_button = ft.ElevatedButton(
-        text='Edit',
-        on_click=lambda e: page.go("/edit")
-    )
-    appbar = ft.AppBar(
-        title=ft.Text('RAW Image Processor'),
-        actions=[
-            library_page_button,
-            edit_page_button
-        ],
-        title_spacing=10
-    )
-    appbar = ft.Row([library_page_button, edit_page_button])
-    return library_page_button, edit_page_button, appbar
-
-
 def create_photo_area(page, raw_path, params):
     img_container = ft.Container(
         width=page.width,
         height=page.height
     )
-    image_object = RawImage(raw_path)
-    image_processor_thread.process_image(image_object, params, img_container)
+    if raw_path is None:
+        image_object = EmptyImage()
+    else:
+        image_object = RawImage(raw_path)
+        image_processor_thread.process_image(image_object, params, img_container)
     return image_object, img_container
 
 
 def create_control_area(page):
-    status_description_box = ft.Text(value='Status')
+    status_description_box = ft.Text(value='Status:')
     status_text_box = ft.Text(value='Ready')
     status_container = ft.Row(
         controls=[
@@ -372,10 +383,200 @@ def submit_button_click(
     e.page.update()
 
 
-def main(page):
+class Database:
+    def __init__(self):
+        self.conn = sqlite3.connect(os.path.join(PERSIST_DIR, 'images.db'), check_same_thread=False)
+        self.cursor = self.conn.cursor()
 
-    # temp
-    raw_path = '/Users/ibobby/School/SENG401/SENG-401-Final-Project/sample_images/R62_0323.CR3'
+    def execute(self, query, replacement=None):
+        if replacement is None:
+            return self.cursor.execute(query)
+        else:
+            return self.cursor.execute(query, replacement)
+
+    def commit(self):
+        self.conn.commit()
+
+    def close(self):
+        self.conn.close()
+
+    # TODO: use placeholders for the following methods
+    # TODO: add a parameter for commit
+    def insert(self, table, values, list_=False, dict_=False):
+        if not dict_:
+            self.cursor.execute(f'INSERT INTO {table} VALUES (?)', values)
+        elif not list_ and dict_:
+            columns = ', '.join(values.keys())
+            placeholder = ', '.join(['?' for _ in range(len(values))])
+            self.cursor.execute(f'INSERT INTO {table} ({columns}) VALUES ({placeholder})', tuple(values.values()))
+        elif list_ and dict_:
+            columns = ', '.join(values[0].keys())
+            placeholder = ', '.join(['?' for _ in range(len(values[0]))])
+            self.cursor.executemany(f'INSERT INTO {table} ({columns}) VALUES ({placeholder})', tuple([tuple(_.values()) for _ in values]))
+        self.commit()
+        return self.cursor.lastrowid
+
+    def delete(self, table, condition, replacement=None):
+        if replacement is None:
+            self.cursor.execute(f'DELETE FROM {table} WHERE {condition}')
+        else:
+            self.cursor.execute(f'DELETE FROM {table} WHERE {condition}', replacement)
+        self.commit()
+
+    def drop(self, table):
+        self.cursor.execute(f'DROP TABLE {table}')
+        self.commit()
+
+    def select(self, table, columns: list, condition=None, replacement=None):
+        if condition is not None:
+            if replacement is not None:
+                return self.cursor.execute(f'SELECT {", ".join(columns)} FROM {table} WHERE {condition}', replacement).fetchall()
+            else:
+                return self.cursor.execute(f'SELECT {", ".join(columns)} FROM {table} WHERE {condition}').fetchall()
+        else:
+            return self.cursor.execute(f'SELECT {", ".join(columns)} FROM {table}').fetchall()
+
+    def update(self, table, column: list, value: list, condition):
+        self.cursor.execute(f'UPDATE {table} SET {", ".join([f"{column[i]} = {value[i]}" for i in range(len(column))])} WHERE {condition}')
+        self.commit()
+
+    # custom
+    def import_image(self, paths):
+        new_images = []
+        for path in paths:
+            exist = self.select('images', ['path'], 'path = ?', (path,))
+            if not exist:
+                new_images.append(path)
+        if not new_images:
+            return
+        self.insert('images', [{'path': _} for _ in new_images], list_=True, dict_=True)
+        placeholders = ', '.join('?' for _ in new_images)
+        ids = self.select('images', ['id'], f'path IN ({placeholders})', tuple(new_images))
+        ids = [_[0] for _ in ids]
+        ids.sort()
+        return ids, new_images
+
+    def get_params(self, image_id):
+        return self.select('images', ['exposure', 'contrast', 'white_levels', 'highlights', 'shadows', 'black_levels', 'saturation'], 'id = ?', (image_id,))
+
+
+def create_thumbnail(image_path, thumbnail_path):
+    with rawpy.imread(image_path) as raw:
+        img = raw.postprocess(
+            use_camera_wb=True,
+            output_bps=8,
+            half_size=True
+        )
+        img = Image.fromarray(img)
+        long_edge = 512
+        img.thumbnail((long_edge, long_edge))
+        img.save(thumbnail_path)
+
+
+database = Database()
+def main(page):
+    # library
+    image_paths = {}
+    displaying_image = {}
+    # edit
+    image_object = EmptyImage()
+    image_path = ''
+    params = Parameter()
+
+    def export_button_click(e, image_id):
+        image_path = image_paths[image_id]
+        # TODO: check if raw image exists
+        params_sql = database.execute('SELECT exposure, contrast, white_levels, highlights, shadows, black_levels, saturation FROM images WHERE id = ?', (image_id,)).fetchone()
+        params = Parameter(*params_sql)
+        image_object = RawImage(image_path)
+        image = image_object.render_image(params)
+        image_object.save_image(image, image_path+'.jpg')
+        e.page.update()
+
+    def delete_button_click(e, image_id):
+        os.remove(os.path.join(PERSIST_DIR, 'thumbnails', str(image_id) + '.jpg'))
+        database.delete('images', 'id = ?', (image_id,))
+        # remove from library view
+        image_id = str(image_id)
+        for control in image_grid.controls:
+            if control.key == image_id:
+                image_grid.controls.remove(control)
+                break
+        e.page.update()
+
+    def edit_on_click(e):
+        page.go("/edit")
+
+    def create_image_selector_in_library(image_id):
+        thumbnail_path = os.path.join(PERSIST_DIR, 'thumbnails', str(image_id) + '.jpg')
+        edit_button = ft.ElevatedButton(
+            text='Edit',
+            on_click=lambda e: edit_on_click
+        )
+        export_button = ft.TextButton(
+            text='Export',
+            on_click=lambda e: export_button_click(e, image_id),
+        )
+        delete_button = ft.TextButton(
+            text='Delete',
+            on_click=lambda e: delete_button_click(e, image_id)
+        )
+        return ft.Column(
+            key=str(image_id),
+            controls=[
+                ft.Image(src=thumbnail_path, width=200, height=200),
+                ft.Row(
+                    controls=[
+                        edit_button,
+                        export_button,
+                        delete_button
+                    ],
+                    alignment=ft.MainAxisAlignment.CENTER
+                ),
+            ],
+            alignment=ft.MainAxisAlignment.CENTER,
+            horizontal_alignment=ft.CrossAxisAlignment.CENTER,
+        )
+
+    def file_selected(e):
+        if not e.files:
+            return
+        file_path = [_.path for _ in e.files]
+        # save to database
+        ids, new_images = database.import_image(file_path)
+        for new_image_path, id_ in zip(new_images, ids):
+            # create thumbnails
+            create_thumbnail(new_image_path, os.path.join(PERSIST_DIR, 'thumbnails', str(id_) + '.jpg'))
+            # add to image_paths
+            image_paths[id_] = new_image_path
+            # add image to library page
+            image_grid.controls.append(create_image_selector_in_library(id_))
+        # switch to library page
+        page.go('/library')
+        e.page.update()
+    # Database
+    # database.drop('images')
+    database.execute('''
+        CREATE TABLE IF NOT EXISTS images (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            path TEXT UNIQUE NOT NULL,
+            exposure FLOAT DEFAULT 0,
+            contrast INTEGER DEFAULT 0,
+            white_levels INTEGER DEFAULT 0,
+            highlights INTEGER DEFAULT 0,
+            shadows INTEGER DEFAULT 0,
+            black_levels INTEGER DEFAULT 0,
+            saturation INTEGER DEFAULT 0
+        )
+    ''')
+    database.execute('''
+        CREATE TABLE IF NOT EXISTS CONFIG (
+        key TEXT NOT NULL PRIMARY KEY,
+        value TEXT
+        )
+    ''')
+    database.commit()
+
     # app name
     page.title = APP_NAME
     # setup thread
@@ -389,13 +590,14 @@ def main(page):
     page.window.left = 0
 
     # App bar
-    appbar_library_button, appbar_edit_button, appbar = create_appbar(page)
-
-    params = Parameter(1, 0, 0, 0, 0, 0, 0)
+    library_page_button = ft.ElevatedButton(
+        text='Library',
+        on_click=lambda e: page.go("/library")
+    )
     # Photo area
     image_object, photo_area = create_photo_area(
         page,
-        raw_path,
+        None,
         params=params
     )
     # Parameter area
@@ -422,22 +624,51 @@ def main(page):
         [status_container, prompt_text_box, feedback_text_box, control_button_area]
     )
 
-
     # Edit area
     edit_area = ft.Column(
         [control_area, parameter_area],
         width=400
     )
     # Main area
-    main_area = ft.Row(
-        [photo_area, edit_area],
-        vertical_alignment=ft.CrossAxisAlignment.START
+    edit_page = ft.Column(
+        controls=[
+            library_page_button,
+            ft.Row(
+                [photo_area, edit_area],
+                vertical_alignment=ft.CrossAxisAlignment.START
+            )
+        ]
     )
+    # Library
+    input_file_picker = ft.FilePicker(
+        on_result=file_selected,
+    )
+    import_button = ft.TextButton(
+        text='Import Image',
+        on_click=lambda e: input_file_picker.pick_files(allow_multiple=True, allowed_extensions=RAW_EXTENSIONS)
+    )
+    image_grid = ft.GridView(
+        expand=1,
+        runs_count=5,
+        max_extent=250,
+        child_aspect_ratio=1.0,
+        spacing=5,
+        run_spacing=5,
+    )
+    images_to_load = database.select('images', ['id', 'path'],)
+    for i in images_to_load:
+        image_paths[i[0]] = i[1]
+        image_grid.controls.append(create_image_selector_in_library(i[0]))
+    library_page = ft.Column([
+        import_button, input_file_picker,
+        image_grid
+    ])
+    # image_grid.controls.append()
     def route_change(route):
         page.views.clear()
-        page.views.append(ft.View("/library", [appbar, parameter_area]))
+        page.views.append(ft.View("/library", [library_page]))
         if page.route == '/edit':
-            page.views.append(ft.View("/edit", [appbar, main_area]))
+            page.views.append(ft.View("/edit", [edit_page]))
         page.update()
     def view_pop(view):
         page.views.pop()
@@ -446,9 +677,25 @@ def main(page):
     page.on_route_change = route_change
     page.on_view_pop = view_pop
     page.go('/library')
-    page.go('/edit')
+    last_opened = database.execute('SELECT value FROM CONFIG WHERE key = "last_opened"').fetchone()
+    if last_opened is not None:
+        last_opened_id = last_opened[0]
+        last_opened_path = database.execute('SELECT path FROM images WHERE id = ?', (last_opened_id,)).fetchone()
+        if os.path.exists(last_opened_path[0]):
+            raw_path = last_opened_path[0]
+            image_object = RawImage(raw_path)
+            exposure, contrast, white_levels, highlights, shadows, black_levels, saturation = database.execute('SELECT (exposure, contrast, white_levels, highlights, shadows, black_levels, saturation) FROM images WHERE id = ?', (last_opened_id,)).fetchone()
+            params = Parameter(
+                exposure=exposure,
+                contrast=contrast,
+                white_levels=white_levels,
+                highlights=highlights,
+                shadows=shadows,
+                black_levels=black_levels,
+            )
+            image_processor_thread.process_image(image_object, params, photo_area)
+            page.go('/edit')
     page.update()
 
 ft.app(target=main)
 shutil.rmtree(TEMP_DIR)
-# conn.close()
