@@ -449,6 +449,8 @@ def main(page):
     page.go('/edit')
     page.update()
 
-ft.app(target=main)
-shutil.rmtree(TEMP_DIR)
-# conn.close()
+if __name__ == "__main__":
+    # Code to launch the UI 
+    ft.app(target=main)
+    shutil.rmtree(TEMP_DIR)
+    # conn.close()
