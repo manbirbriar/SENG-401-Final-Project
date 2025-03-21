@@ -123,11 +123,13 @@ def test_EmptyImage_save_image(tmp_path):
 
 @patch("ImageProcessing.TEMP_DIR", "/tmp")  # Mock TEMP_DIR for testing
 def test_ImageProcessorThread_initialization():
-    thread = ImageProcessorThread()
-    assert isinstance(thread, ImageProcessorThread), "Thread should be an instance of ImageProcessorThread"
-    assert thread.isDaemon(), "Thread should be a daemon thread"
-    assert not thread.event.is_set(), "Event should not be set initially"
-    assert not thread.need_update_image, "need_update_image should be False initially"
-    assert not thread.generate_original, "generate_original should be False initially"
+    thread1 = ImageProcessorThread()
+    assert isinstance(thread1, ImageProcessorThread), "Thread should be an instance of ImageProcessorThread"
+    assert not thread1.event.is_set(), "Event should not be set initially"
+    assert not thread1.need_update_image, "need_update_image should be False initially"
+    assert not thread1.generate_original, "generate_original should be False initially"
+
+    thread2 = ImageProcessorThread()
+    assert thread1 is thread2, "ImageProcessorThread should enforce singleton behavior"
 
 

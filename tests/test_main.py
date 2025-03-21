@@ -81,8 +81,9 @@ def test_create_control_area(mock_page):
     assert isinstance(reset_button, ft.TextButton), "reset_button should be an instance of ft.TextButton"
     assert reset_button.text == "Reset", "reset_button should have the text 'Reset'"
 
-@patch("main.database")  
-def test_submit_button_click_success(mock_database, mock_page, mock_params, mock_image_processor_thread, mocker):
+@patch("main.database")
+@patch("main.image_analyzer.api_call")  
+def test_submit_button_click_success(mock_api_call, mock_database, mock_page, mock_params, mock_image_processor_thread, mocker):
     mock_prompt_text_box = Mock(value="Enhance brightness and contrast")
     mock_status_text_box = Mock()
     mock_feedback_text_box = Mock()
@@ -106,9 +107,9 @@ def test_submit_button_click_success(mock_database, mock_page, mock_params, mock
             black_levels=0.2
         )
     }
-    mocker.patch("ai_integration.api_call", return_value=mock_response)
+    mock_api_call.return_value = mock_response
     mock_database.update.return_value = None  
-
+   
     submit_button_click(
         e=mock_page,
         prompt_text_box=mock_prompt_text_box,
@@ -129,12 +130,12 @@ def test_submit_button_click_success(mock_database, mock_page, mock_params, mock
     assert mock_feedback_text_box.value == "Image enhanced successfully", "Feedback text box should display success feedback"
     assert mock_exposure_slider.value == 1.5, "Exposure slider should be updated with new value"
     assert mock_contrast_slider.value == 2.0, "Contrast slider should be updated with new value"
-    assert mock_highlights_slider.value == 1.0, "Highlights slider should be updated with new value"
-
+    assert mock_highlights_slider.value == 1.0, "Highlights slider should be updated with new value" 
 
 
 @patch("main.database")
-def test_submit_button_click_failure(mock_database, mock_page, mock_params, mock_image_processor_thread, mocker):
+@patch("main.image_analyzer.api_call")  
+def test_submit_button_click_failure(mock_api_call, mock_database, mock_page, mock_params, mock_image_processor_thread, mocker):
     mock_prompt_text_box = Mock(value="Enhance brightness and contrast")
     mock_status_text_box = Mock()
     mock_feedback_text_box = Mock()
@@ -151,7 +152,7 @@ def test_submit_button_click_failure(mock_database, mock_page, mock_params, mock
         "success": False,
         "feedback": "Failed to enhance the image"
     }
-    mocker.patch("ai_integration.api_call", return_value=mock_response)
+    mock_api_call.return_value = mock_response
 
     submit_button_click(
         e=mock_page,
