@@ -15,6 +15,10 @@ TEMP_DIR = generate_temp_dir()
 
 
 class Parameter:
+    """
+    A class to store parameters for image adjustments such as exposure, contrast,
+    highlights, shadows, and black levels.
+    """
     exposure = 0
     contrast = 0
     highlights = 0
@@ -22,6 +26,15 @@ class Parameter:
     black_levels = 0
 
     def __init__(self, exposure=0, contrast=0, highlights=0, shadows=0, black_levels=0):
+        """
+        Initializes the parameters with default values or user-provided values.
+
+        :param exposure: Exposure adjustment in stops.
+        :param contrast: Contrast adjustment value.
+        :param highlights: Highlights adjustment value.
+        :param shadows: Shadows adjustment value.
+        :param black_levels: Black levels adjustment value.
+        """
         self.exposure = exposure
         self.contrast = contrast
         self.highlights = highlights
@@ -29,6 +42,9 @@ class Parameter:
         self.black_levels = black_levels
 
     def reset_parameters(self):
+        """
+        Resets all parameters to their default values (0).
+        """
         self.exposure = 0
         self.contrast = 0
         self.highlights = 0
@@ -37,7 +53,16 @@ class Parameter:
 
 
 class RawImage:
+    """
+    A class that handles the processing of raw image files, including adjustments
+    such as exposure, contrast, highlights, shadows, and black levels.
+    """
     def __init__(self, file_path):
+        """
+        Loads and processes the raw image from the specified file path.
+
+        :param file_path: Path to the raw image file to be processed.
+        """
         self.file_path = file_path
         with rawpy.imread(file_path) as raw_file:
             self.raw_image = raw_file.postprocess(
@@ -50,10 +75,25 @@ class RawImage:
 
     @staticmethod
     def adjust_exposure(image, stops):
+        """
+        Adjusts the exposure of the image by a certain number of stops.
+
+        :param image: The raw image to be adjusted.
+        :param stops: The number of exposure stops to adjust by.
+        :return: The exposure-adjusted image.
+        """
         return image * (2 ** stops)
 
     @staticmethod
     def adjust_contrast(image, contrast, pivot=0.416):
+        """
+        Adjusts the contrast of the image.
+
+        :param image: The raw image to be adjusted.
+        :param contrast: The contrast adjustment value.
+        :param pivot: The pivot point for contrast adjustment, default is 0.416.
+        :return: The contrast-adjusted image.
+        """
         contrast = contrast / 800 + 1
         return (image - pivot) * contrast + pivot
 
@@ -153,11 +193,25 @@ class RawImage:
 
     @staticmethod
     def adjust_black_levels(image, black_levels):
+        """
+        Adjusts the black levels of the image.
+
+        :param image: The raw image to be adjusted.
+        :param black_levels: The black levels adjustment value.
+        :return: The black-level-adjusted image.
+        """
         black_levels = (black_levels / 100) / 2
         range_ = 1 - black_levels
         return image * range_ + black_levels
 
     def render_image(self, params):
+        """
+        Renders the image by applying the given parameters for exposure, contrast,
+        black levels, highlights, and shadows.
+
+        :param params: The parameters object containing the adjustments to apply.
+        :return: The final rendered image.
+        """
         # exposure
         image = self.adjust_exposure(self.raw_image, params.exposure)
         # contrast
@@ -175,6 +229,12 @@ class RawImage:
 
     @staticmethod
     def srgb_gamma_correction(image):
+        """
+        Applies gamma correction to convert the image gamma from linear to sRGB.
+
+        :param image: The linear image to be gamma corrected.
+        :return: The gamma-corrected image.
+        """
         mask = image <= 0.0031308
         corrected = np.empty_like(image)
         corrected[mask] = 12.92 * image[mask]
@@ -184,6 +244,13 @@ class RawImage:
 
     @staticmethod
     def save_image(image, path, bit_depth=8):
+        """
+        Saves the image to a specified path.
+
+        :param image: The image to save.
+        :param path: The destination path for the image.
+        :param bit_depth: The bit depth to save the image in (8 or 16).
+        """
         if path.lower().endswith(('.png', '.tif', '.tiff')) and bit_depth == 16:
             data_type = np.uint16
             scale = 65535
@@ -197,15 +264,33 @@ class RawImage:
 
 
 class EmptyImage(RawImage):
+    """
+    A subclass of RawImage representing an empty image.
+
+    This class initializes an empty 256x256 RGB image filled with zeros (black image) as a placeholder or default image.
+    """
     def __init__(self):
+        """
+        Initializes an empty 256x256 RGB image with all pixel values set to zero (black).
+        """
         self.raw_image = np.zeros((256, 256, 3), dtype=np.float32)
 
 class ImageProcessorThread(threading.Thread):
+    """
+    A singleton thread class responsible for processing images asynchronously.
+
+    This thread processes images in the background and ensures that only one instance is active at any time.
+    It performs image rendering, saving, and encoding tasks, and manages the state of an image container.
+    """
     _instance = None
     _lock = threading.Lock()
 
     def __new__(cls, *args, **kwargs):
-        """Ensure strict singleton behavior."""
+        """
+        Ensures that only a single instance of ImageProcessorThread is created (singleton pattern).
+
+        :return: The singleton instance of ImageProcessorThread.
+        """
         if not cls._instance:
             with cls._lock:
                 if not cls._instance:
@@ -214,7 +299,11 @@ class ImageProcessorThread(threading.Thread):
         return cls._instance
 
     def _initialize(self):
-        """Custom initialization logic to avoid missing attributes."""
+        """
+        Initializes the attributes of the thread instance. This ensures that the thread is ready to process images.
+
+        The thread runs as a daemon and starts automatically.
+        """
         if self._instance is not None:
             super().__init__()
             self.event = threading.Event()
@@ -230,7 +319,12 @@ class ImageProcessorThread(threading.Thread):
             self._initialized = True  # Prevent re-initialization
 
     def run(self):
-        """Thread execution loop."""
+        """
+        The main loop that continuously checks if image processing is needed.
+
+        This method waits for the event to be set and processes the image if necessary. It performs the rendering,
+        saving, encoding, and updating the image container, then triggers the page update.
+        """
         while True:
             self.event.wait()  # Wait for the event to be set
             while self.need_update_image:
@@ -260,7 +354,14 @@ class ImageProcessorThread(threading.Thread):
             self.event.clear()  # Clear the event after processing
 
     def process_image(self, image_object: RawImage, params, image_container, generate_original=False):
-        """Process image using the singleton thread."""
+        """
+        Triggers the image processing by setting the necessary parameters and triggering the event.
+
+        :param image_object: The raw image to be processed.
+        :param params: Parameters used for rendering the image.
+        :param image_container: The container where the processed image will be placed.
+        :param generate_original: Flag indicating whether to generate the original image as well.
+        """
         self.image_object = image_object
         self.params = params
         self.image_container = image_container
@@ -270,6 +371,14 @@ class ImageProcessorThread(threading.Thread):
 
 
 def create_thumbnail(image_path, thumbnail_path):
+    """
+    Creates a thumbnail of a raw image and saves it to the specified path.
+
+    This function reads a raw image file, processes it to create a smaller version, and saves it as a thumbnail.
+
+    :param image_path: Path to the raw image file.
+    :param thumbnail_path: Path where the thumbnail image will be saved.
+    """
     with rawpy.imread(image_path) as raw:
         img = raw.postprocess(
             use_camera_wb=True,
