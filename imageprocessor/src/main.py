@@ -23,7 +23,8 @@ image_processor_thread = ImageProcessorThread()
 def create_photo_area(page, raw_path, params):
     img_container = ft.Container(
         width=page.width,
-        height=page.height
+        height=page.height,
+        expand=True,
     )
     if raw_path is None:
         image_object = EmptyImage()
@@ -77,7 +78,7 @@ def submit_button_click(
         image_processor_thread.process_image(image_object, new_params, img_container)
     else:
         status_text_box.value = 'Failed'
-        feedback_text_box.value = 'Failed to process the image.'
+        feedback_text_box.value = response['feedback']
     e.page.update()
 
 
@@ -143,7 +144,7 @@ def main(page):
         if image is None:
             image_path = image_paths[image_id]
             # TODO: check if raw image exists, pop up alert if not
-            params_sql = database.execute('SELECT exposure, contrast, highlights, shadows, black_levels, saturation FROM images WHERE id = ?', (image_id,)).fetchone()
+            params_sql = database.execute('SELECT exposure, contrast, highlights, shadows, black_levels FROM images WHERE id = ?', (image_id,)).fetchone()
             params = Parameter(*params_sql)
             image_object = RawImage(image_path)
             image = image_object.render_image(params)
@@ -216,16 +217,15 @@ def main(page):
             return
         image_path = image_path[0]
         image_object = RawImage(image_path)
-        exposure, contrast, highlights, shadows, black_levels, saturation = database.execute(
-            'SELECT exposure, contrast, highlights, shadows, black_levels, saturation FROM images WHERE id = ?',
+        exposure, contrast, highlights, shadows, black_levels = database.execute(
+            'SELECT exposure, contrast, highlights, shadows, black_levels FROM images WHERE id = ?',
             (image_id,)).fetchone()
         params = Parameter(
             exposure=exposure,
             contrast=contrast,
             highlights=highlights,
             shadows=shadows,
-            black_levels=black_levels,
-            saturation=saturation
+            black_levels=black_levels
         )
 
         exposure_slider.value = exposure
@@ -233,13 +233,11 @@ def main(page):
         highlights_slider.value = highlights
         shadows_slider.value = shadows
         black_levels_slider.value = black_levels
-        saturation_slider.value = saturation
         exposure_slider_value.value = str(exposure)
         contrast_slider_value.value = str(contrast)
         highlights_slider_value.value = str(highlights)
         shadows_slider_value.value = str(shadows)
         black_levels_slider_value.value = str(black_levels)
-        saturation_slider_value.value = str(saturation)
 
         page.go('/edit')
         database.set_config('last_opened', image_id)
@@ -280,7 +278,6 @@ def main(page):
         )
 
         common_params = {
-            'min': -100,
             'max': 100,
             'value': 0,
             'height': height
@@ -288,6 +285,7 @@ def main(page):
         contrast_text = ft.Text('Contrast', height=height)
         contrast_slider = ft.Slider(
             **common_params,
+            min=-100,
             on_change=lambda e: onchange_parameter(
                 e, 'contrast', contrast_slider_value,
                 **change_parameter_text_common_params
@@ -299,6 +297,7 @@ def main(page):
         highlights_text = ft.Text('Highlights', height=height)
         highlights_slider = ft.Slider(
             **common_params,
+            min=0,
             on_change=lambda e: onchange_parameter(
                 e, 'highlights', highlights_slider_value,
                 **change_parameter_text_common_params
@@ -310,6 +309,7 @@ def main(page):
         shadows_text = ft.Text('Shadows', height=height)
         shadows_slider = ft.Slider(
             **common_params,
+            min=0,
             on_change=lambda e: onchange_parameter(
                 e, 'shadows', shadows_slider_value,
                 **change_parameter_text_common_params
@@ -321,6 +321,7 @@ def main(page):
         black_levels_text = ft.Text('Black Levels', height=height)
         black_levels_slider = ft.Slider(
             **common_params,
+            min=-100,
             on_change=lambda e: onchange_parameter(
                 e, 'black_levels', black_levels_slider_value,
                 **change_parameter_text_common_params
@@ -329,31 +330,19 @@ def main(page):
         )
         black_levels_slider_value = ft.Text('0', height=height)
 
-        saturation_text = ft.Text('Saturation', height=height)
-        saturation_slider = ft.Slider(
-            **common_params,
-            on_change=lambda e: onchange_parameter(
-                e, 'saturation', saturation_slider_value,
-                **change_parameter_text_common_params
-            ),
-            on_change_end=lambda e: on_change_end_parameter(e, 'saturation', params)
-        )
-        saturation_slider_value = ft.Text('0', height=height)
-
         # Create columns
         name_column = ft.Column(
-            [exposure_text, contrast_text, highlights_text, shadows_text, black_levels_text,
-             saturation_text],
+            [exposure_text, contrast_text, highlights_text, shadows_text, black_levels_text],
             width=90,
             alignment=ft.MainAxisAlignment.START
         )
         slider_column = ft.Column(
             [exposure_slider, contrast_slider, highlights_slider, shadows_slider,
-             black_levels_slider, saturation_slider],
+             black_levels_slider],
         )
         value_column = ft.Column(
             [exposure_slider_value, contrast_slider_value, highlights_slider_value,
-             shadows_slider_value, black_levels_slider_value, saturation_slider_value],
+             shadows_slider_value, black_levels_slider_value],
             width=40,
         )
 
@@ -363,9 +352,9 @@ def main(page):
         return (
             parameter_area,
             exposure_slider, contrast_slider, highlights_slider, shadows_slider,
-            black_levels_slider,saturation_slider,
+            black_levels_slider,
             exposure_slider_value, contrast_slider_value, highlights_slider_value,
-            shadows_slider_value, black_levels_slider_value, saturation_slider_value
+            shadows_slider_value, black_levels_slider_value
         )
 
     def reset(e):
@@ -374,13 +363,11 @@ def main(page):
         highlights_slider.value = 0
         shadows_slider.value = 0
         black_levels_slider.value = 0
-        saturation_slider.value = 0
         exposure_slider_value.value = '0'
         contrast_slider_value.value = '0'
         highlights_slider_value.value = '0'
         shadows_slider_value.value = '0'
         black_levels_slider_value.value = '0'
-        saturation_slider_value.value = '0'
         params.reset_parameters()
         page.update()
         image_processor_thread.process_image(image_object, params, photo_area)
@@ -428,9 +415,9 @@ def main(page):
     )
     # Parameter area
     (parameter_area,
-     exposure_slider, contrast_slider, highlights_slider, shadows_slider, black_levels_slider, saturation_slider,
+     exposure_slider, contrast_slider, highlights_slider, shadows_slider, black_levels_slider,
      exposure_slider_value, contrast_slider_value, highlights_slider_value,
-     shadows_slider_value, black_levels_slider_value, saturation_slider_value
+     shadows_slider_value, black_levels_slider_value
      ) = create_parameter_sliders(photo_area)
 
     # Control area

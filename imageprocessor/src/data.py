@@ -15,8 +15,7 @@ class Database:
                     contrast INTEGER DEFAULT 0,
                     highlights INTEGER DEFAULT 0,
                     shadows INTEGER DEFAULT 0,
-                    black_levels INTEGER DEFAULT 0,
-                    saturation INTEGER DEFAULT 0
+                    black_levels INTEGER DEFAULT 0
                 )
             ''')
         self.cursor.execute('''
@@ -103,7 +102,7 @@ class Database:
         return ids, new_images
 
     def get_params(self, image_id):
-        return self.select('images', ['exposure', 'contrast', 'highlights', 'shadows', 'black_levels', 'saturation'], 'id = ?', (image_id,))
+        return self.select('images', ['exposure', 'contrast', 'highlights', 'shadows', 'black_levels'], 'id = ?', (image_id,))
 
     def set_config(self, key, value):
         exists = self.select('config', ['value'], 'key = ?', (key,))

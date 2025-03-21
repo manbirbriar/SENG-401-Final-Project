@@ -1,6 +1,8 @@
-flet
-pillow
+flet~=0.25.2
+pillow~=11.1.0
 google-genai
-numpy
-python-dotenv
-rawpy
+numpy~=2.2.2
+python-dotenv~=1.0.1
+rawpy~=0.24.0
+opencv-python~=4.11.0.86
+httpx~=0.28.1
