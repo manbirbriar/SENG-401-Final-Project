@@ -81,6 +81,11 @@ def submit_button_click(
         feedback_text_box.value = response['feedback']
     e.page.update()
 
+def open_url(url):
+    if os.name == 'nt':
+        os.system(f'start {url}')
+    else:
+        os.system(f'open {url}')
 
 database = Database()
 def main(page):
@@ -491,7 +496,26 @@ def main(page):
         if last_opened != 'None':
             current_image_id = int(last_opened)
             image_object = open_edit_tab(page, current_image_id)
+    # first time open
+    not_first_time_open = database.get_config('not_first_time_open')
+    if not not_first_time_open:
+        database.set_config('not_first_time_open', '1')
+        def handle_close(e):
+            page.close(dlg_modal)
+            if e.control.text == 'Yes':
+                open_url('https://youtu.be/zhYNW-RsFqc')
+            page.update()
 
+        dlg_modal = ft.AlertDialog(
+            modal=True,
+            title=ft.Text("Do you want to watch the tutorial?"),
+            actions=[
+                ft.TextButton("Yes", on_click=handle_close),
+                ft.TextButton("No", on_click=handle_close),
+            ],
+            actions_alignment=ft.MainAxisAlignment.END,
+        )
+        page.open(dlg_modal)
     page.update()
 
 if __name__ == '__main__':
