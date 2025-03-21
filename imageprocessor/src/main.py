@@ -461,5 +461,6 @@ def main(page):
             image_object, _ = open_edit_tab(page, current_image_id)
     page.update()
 
-ft.app(target=main)
-shutil.rmtree(TEMP_DIR)
+if __name__ == '__main__':
+    ft.app(target=main)
+    shutil.rmtree(TEMP_DIR)
