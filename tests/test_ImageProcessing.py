@@ -5,6 +5,7 @@ from PIL import Image
 import os
 import flet as ft
 import rawpy
+from unittest.mock import Mock, patch
 
 
 sys.path.append('imageprocessor/src')
@@ -55,8 +56,10 @@ def test_RawImage_adjust_exposure():
 
 def test_RawImage_adjust_contrast():
     dummy_image = np.array([[0.5, 0.5], [0.5, 0.5]], dtype=np.float32)
-    result = RawImage.adjust_contrast(dummy_image, 100)  # Increase contrast by 100%
-    expected = np.array([[0.583, 0.583], [0.583, 0.583]], dtype=np.float32)
+    result = RawImage.adjust_contrast(dummy_image, 100)  # Increase contrast by 100
+    contrast = 100 / 800 + 1  # Updated contrast calculation
+    pivot = 0.416
+    expected = (dummy_image - pivot) * contrast + pivot
     assert np.allclose(result, expected, rtol=1e-3, atol=1e-3), "Contrast adjustment does not match expected result"
 
 def test_RawImage_srgb_gamma_correction():
@@ -93,8 +96,10 @@ def test_EmptyImage_adjust_exposure():
 
 def test_EmptyImage_adjust_contrast():
     dummy_image = np.array([[0.5, 0.5], [0.5, 0.5]], dtype=np.float32)
-    result = EmptyImage.adjust_contrast(dummy_image, 100)  # Increase contrast by 100%
-    expected = np.array([[0.583, 0.583], [0.583, 0.583]], dtype=np.float32)
+    result = EmptyImage.adjust_contrast(dummy_image, 100)  # Increase contrast by 100
+    contrast = 100 / 800 + 1  # Updated contrast calculation
+    pivot = 0.416
+    expected = (dummy_image - pivot) * contrast + pivot
     assert np.allclose(result, expected, rtol=1e-3, atol=1e-3), "Contrast adjustment does not match expected result"
 
 def test_EmptyImage_srgb_gamma_correction():
@@ -115,4 +120,14 @@ def test_EmptyImage_save_image(tmp_path):
     assert saved_image.mode == "RGB", "Saved image should be in RGB mode"    
 
 #ImageProcessorThread Test
+
+@patch("ImageProcessing.TEMP_DIR", "/tmp")  # Mock TEMP_DIR for testing
+def test_ImageProcessorThread_initialization():
+    thread = ImageProcessorThread()
+    assert isinstance(thread, ImageProcessorThread), "Thread should be an instance of ImageProcessorThread"
+    assert thread.isDaemon(), "Thread should be a daemon thread"
+    assert not thread.event.is_set(), "Event should not be set initially"
+    assert not thread.need_update_image, "need_update_image should be False initially"
+    assert not thread.generate_original, "generate_original should be False initially"
+
 
