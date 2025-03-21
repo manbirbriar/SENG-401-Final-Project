@@ -14,7 +14,7 @@ TEMP_DIR = generate_temp_dir()
 
 
 class Parameter:
-    exposure = 1
+    exposure = 0
     contrast = 0
     highlights = 0
     shadows = 0
@@ -28,6 +28,14 @@ class Parameter:
         self.shadows = shadows
         self.black_levels = black_levels
         self.saturation = saturation
+
+    def reset_parameters(self):
+        self.exposure = 0
+        self.contrast = 0
+        self.highlights = 0
+        self.shadows = 0
+        self.black_levels = 0
+        self.saturation = 0
 
 
 class RawImage:
@@ -93,6 +101,8 @@ class ImageProcessorThread(threading.Thread):
     image_object = None
     params = None
     image_container = None
+    generate_original = False
+    need_update_image = False
 
     def __init__(self):
         super().__init__()
@@ -101,29 +111,33 @@ class ImageProcessorThread(threading.Thread):
         self.start()
 
     def run(self):
-        global need_update_image
         while True:
             self.event.wait()  # Wait for the event to be set
-            while need_update_image:
-                need_update_image = False
+            while self.need_update_image:
+                self.need_update_image = False
                 image = self.image_object.render_image(self.params)
-                temp_path = os.path.join(TEMP_DIR, 'temp.tif')
-                RawImage.save_image(image, temp_path)
-                with open(temp_path, 'rb') as f:
-                    base64_str = base64.b64encode(f.read()).decode('utf-8')
+                target_path = os.path.join(TEMP_DIR, 'temp.tif')
+                RawImage.save_image(image, target_path)
+                with open(target_path, 'rb') as file:
+                    encoded_string = base64.b64encode(file.read()).decode('utf-8')
                 if self.image_container.content is None:
-                    self.image_container.content = ft.Image(src_base64=base64_str)
+                    self.image_container.content = ft.Image(src_base64=encoded_string, key='temp')
                 else:
-                    self.image_container.content.src_base64 = base64_str
+                    self.image_container.content.src_base64 = encoded_string
                 self.page.update()
+                if self.generate_original:
+                    original_params = Parameter()
+                    original_image = self.image_object.render_image(original_params)
+                    target_path = os.path.join(TEMP_DIR, 'original.tif')
+                    RawImage.save_image(original_image, target_path)
             self.event.clear()  # Clear the event after processing
 
-    def process_image(self, image_object: RawImage, params, image_container):
+    def process_image(self, image_object: RawImage, params, image_container, generate_original=False):
         self.image_object = image_object
         self.params = params
         self.image_container = image_container
-        global need_update_image
-        need_update_image = True
+        self.generate_original = generate_original
+        self.need_update_image = True
         self.event.set()  # Set the event to start processing
 
 

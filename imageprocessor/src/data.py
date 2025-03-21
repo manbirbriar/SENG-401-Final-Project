@@ -94,7 +94,7 @@ class Database:
             if not exist:
                 new_images.append(path)
         if not new_images:
-            return
+            return None
         self.insert('images', [{'path': _} for _ in new_images], list_=True, dict_=True)
         placeholders = ', '.join('?' for _ in new_images)
         ids = self.select('images', ['id'], f'path IN ({placeholders})', tuple(new_images))

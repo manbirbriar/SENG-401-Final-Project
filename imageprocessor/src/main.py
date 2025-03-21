@@ -1,3 +1,4 @@
+import base64
 import os
 import shutil
 
@@ -13,9 +14,9 @@ import ai_integration
 # Create persist and temp dirs
 PERSIST_DIR = directory_management.create_persist_dir()
 TEMP_DIR = directory_management.create_temp_dir()
+print(TEMP_DIR)
 
 # Global Variable
-need_update_image = False
 image_processor_thread = ImageProcessorThread()
 
 
@@ -48,20 +49,9 @@ def create_control_area(page):
     )
     feedback_text_box = ft.Text()
     submit_button = ft.TextButton(text='Submit')
-    compare_button = ft.TextButton(text='Compare')
-    apply_button = ft.TextButton(text='Apply')
-    return status_text_box, status_container, prompt_text_box, feedback_text_box, submit_button, compare_button, apply_button
-
-
-def create_param_object(exposure_slider, contrast_slider, highlights_slider, shadows_slider, black_levels_slider, saturation_slider):
-    return Parameter(
-        exposure=2**exposure_slider.value,
-        contrast=contrast_slider.value,
-        highlights=highlights_slider.value,
-        shadows=shadows_slider.value,
-        black_levels=black_levels_slider.value,
-        saturation=saturation_slider.value
-    )
+    compare_button = ft.TextButton(text='Compare', tooltip='Click to toggle the original image and the edited one')
+    reset_button = ft.TextButton(text='Reset')
+    return status_text_box, status_container, prompt_text_box, feedback_text_box, submit_button, compare_button, reset_button
 
 
 def submit_button_click(
@@ -113,16 +103,67 @@ def main(page):
     shadows_slider_value = None
     black_levels_slider_value = None
 
-    def export_button_click(e, image_id):  # export button in library view
-        image_path = image_paths[image_id]
-        # TODO: check if raw image exists, pop up alert if not
-        params_sql = database.execute('SELECT exposure, contrast, highlights, shadows, black_levels, saturation FROM images WHERE id = ?', (image_id,)).fetchone()
-        params = Parameter(*params_sql)
-        image_object = RawImage(image_path)
-        image = image_object.render_image(params)
-
-        RawImage.save_image(image, image_path+'.jpg')
+    # Import Export
+    def file_selected(e):
+        if not e.files:
+            return
+        file_path = [_.path for _ in e.files]
+        # save to database
+        _ = database.import_image(file_path)
+        if _ is None:
+            return
+        ids, new_images = _
+        for new_image_path, id_ in zip(new_images, ids):
+            # create thumbnails
+            create_thumbnail(new_image_path, os.path.join(PERSIST_DIR, 'thumbnails', str(id_) + '.jpg'))
+            # add to image_paths
+            image_paths[id_] = new_image_path
+            # add image to library page
+            image_grid.controls.append(create_image_selector_in_library(id_))
+        database.set_config('last_opened', '"None"')
         e.page.update()
+
+
+    def import_button_onclick(e):
+        input_file_picker = ft.FilePicker(
+            on_result=file_selected,
+        )
+        page.overlay.append(input_file_picker)
+        page.update()
+        input_file_picker.pick_files(allow_multiple=True, allowed_extensions=RAW_EXTENSIONS)
+    import_button = ft.TextButton(
+        text='Import Image',
+        on_click=import_button_onclick
+    )
+
+    def export(e, image_id, image=None):
+        if e.path is None:
+            return
+        export_path = e.path
+        if image is None:
+            image_path = image_paths[image_id]
+            # TODO: check if raw image exists, pop up alert if not
+            params_sql = database.execute('SELECT exposure, contrast, highlights, shadows, black_levels, saturation FROM images WHERE id = ?', (image_id,)).fetchone()
+            params = Parameter(*params_sql)
+            image_object = RawImage(image_path)
+            image = image_object.render_image(params)
+            RawImage.save_image(image, export_path)
+        else:
+            image.save(export_path)
+        e.page.update()
+
+    def export_button_click(e, image_id, image=None):
+        image_path = image_paths[image_id]
+        file_name = os.path.basename(image_path)
+        file_name, _ = os.path.splitext(file_name)
+        output_file_picker = ft.FilePicker(
+            on_result=lambda e1: export(e1, image_id, image)
+        )
+        e.page.overlay.append(output_file_picker)
+        e.page.update()
+        output_file_picker.save_file(
+            file_name=f'{file_name}.jpeg'
+        )
 
     def delete_button_click(e, image_id):
         os.remove(os.path.join(PERSIST_DIR, 'thumbnails', str(image_id) + '.jpg'))
@@ -166,22 +207,6 @@ def main(page):
             horizontal_alignment=ft.CrossAxisAlignment.CENTER,
         )
 
-    def file_selected(e):
-        if not e.files:
-            return
-        file_path = [_.path for _ in e.files]
-        # save to database
-        ids, new_images = database.import_image(file_path)
-        for new_image_path, id_ in zip(new_images, ids):
-            # create thumbnails
-            create_thumbnail(new_image_path, os.path.join(PERSIST_DIR, 'thumbnails', str(id_) + '.jpg'))
-            # add to image_paths
-            image_paths[id_] = new_image_path
-            # add image to library page
-            image_grid.controls.append(create_image_selector_in_library(id_))
-        database.set_config('last_opened', '"None"')
-        e.page.update()
-
     def open_edit_tab(page, image_id):
         global image_object, current_image_id
         current_image_id = image_id
@@ -218,8 +243,8 @@ def main(page):
 
         page.go('/edit')
         database.set_config('last_opened', image_id)
-        processed_image = image_processor_thread.process_image(image_object, params, photo_area)
-        return image_object, processed_image
+        image_processor_thread.process_image(image_object, params, photo_area, generate_original=True)
+        return image_object
 
     def onchange_parameter(e, current_param_name, value_text_box, params, img_container, round_=None):
         value_text_box.value = str(round(e.control.value, round_))
@@ -343,6 +368,23 @@ def main(page):
             shadows_slider_value, black_levels_slider_value, saturation_slider_value
         )
 
+    def reset(e):
+        exposure_slider.value = 0
+        contrast_slider.value = 0
+        highlights_slider.value = 0
+        shadows_slider.value = 0
+        black_levels_slider.value = 0
+        saturation_slider.value = 0
+        exposure_slider_value.value = '0'
+        contrast_slider_value.value = '0'
+        highlights_slider_value.value = '0'
+        shadows_slider_value.value = '0'
+        black_levels_slider_value.value = '0'
+        saturation_slider_value.value = '0'
+        params.reset_parameters()
+        page.update()
+        image_processor_thread.process_image(image_object, params, photo_area)
+
     # app name
     page.title = APP_NAME
     # setup thread
@@ -358,14 +400,25 @@ def main(page):
     def go_from_edit_to_library(e):
         page.go("/library")
         database.set_config('last_opened', '"None"')
-    # App bar
+
+    def compare_button_click(e):
+        if photo_area.content.key == 'original':
+            photo_area.content.key = 'temp'
+            with open(os.path.join(TEMP_DIR, 'temp.tif'), 'rb') as file:
+                photo_area.content.src_base64 = base64.b64encode(file.read()).decode('utf-8')
+        else:
+            photo_area.content.key = 'original'
+            with open(os.path.join(TEMP_DIR, 'original.tif'), 'rb') as file:
+                photo_area.content.src_base64 = base64.b64encode(file.read()).decode('utf-8')
+        e.page.update()
+
     library_page_button = ft.ElevatedButton(
         text='Library',
         on_click=go_from_edit_to_library
     )
     edit_page_export_button = ft.TextButton(
         text='Export',
-        on_click=lambda e: Image.open(os.path.join(TEMP_DIR, 'temp.tif')).save(image_object.file_path+'.jpeg')
+        on_click=lambda e: export_button_click(e, current_image_id, Image.open(os.path.join(TEMP_DIR, 'temp.tif')))
     )
     # Photo area
     image_object, photo_area = create_photo_area(
@@ -381,7 +434,7 @@ def main(page):
      ) = create_parameter_sliders(photo_area)
 
     # Control area
-    status_text_box, status_container, prompt_text_box, feedback_text_box, submit_button, compare_button, apply_button = create_control_area(page)
+    status_text_box, status_container, prompt_text_box, feedback_text_box, submit_button, compare_button, reset_button = create_control_area(page)
     submit_button.on_click = lambda e: submit_button_click(
         e,
         prompt_text_box, params, status_text_box, feedback_text_box,
@@ -389,8 +442,11 @@ def main(page):
         exposure_slider_value, contrast_slider_value, highlights_slider_value,
         image_object, photo_area
     )
+    compare_button.on_click = compare_button_click
+    reset_button.on_click = reset
+
     control_button_area = ft.Row(
-        [submit_button, compare_button, apply_button],
+        [submit_button, compare_button, reset_button],
         alignment=ft.MainAxisAlignment.CENTER
     )
     control_area = ft.Column(
@@ -413,16 +469,6 @@ def main(page):
         ]
     )
     # Library
-    input_file_picker = ft.FilePicker(
-        on_result=file_selected,
-    )
-    output_folder_picker = ft.FilePicker(
-        on_result=file_selected,
-    )
-    import_button = ft.TextButton(
-        text='Import Image',
-        on_click=lambda e: input_file_picker.pick_files(allow_multiple=True, allowed_extensions=RAW_EXTENSIONS)
-    )
     image_grid = ft.GridView(
         expand=1,
         runs_count=5,
@@ -436,10 +482,9 @@ def main(page):
         image_paths[i[0]] = i[1]
         image_grid.controls.append(create_image_selector_in_library(i[0]))
     library_page = ft.Column([
-        input_file_picker, import_button,
+        import_button,
         image_grid
     ])
-    # image_grid.controls.append()
     def route_change(route):
         page.views.clear()
         page.views.append(ft.View("/library", [library_page]))
@@ -458,7 +503,8 @@ def main(page):
         last_opened = last_opened[0][0]
         if last_opened != 'None':
             current_image_id = int(last_opened)
-            image_object, _ = open_edit_tab(page, current_image_id)
+            image_object = open_edit_tab(page, current_image_id)
+
     page.update()
 
 if __name__ == '__main__':

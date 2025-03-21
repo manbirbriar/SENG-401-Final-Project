@@ -23,3 +23,9 @@ RAW_EXTENSIONS = [
     'srw',  # Samsung
     'x3f',  # Sigma
 ]
+
+EXPORT_EXTENSIONS = [
+    '.jpeg', 'jpg',
+    '.png',
+    '.tiff', 'tif'
+]
