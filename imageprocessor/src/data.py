@@ -4,7 +4,15 @@ import sqlite3
 from directory_management import generate_persist_dir
 
 class Database:
-    def __init__(self):
+    _instance = None
+
+    def __new__(cls, *args, **kwargs):
+        if cls._instance is None:
+            cls._instance = super(Database, cls).__new__(cls)
+            cls._instance._initialize()  # Initialize only once
+        return cls._instance
+
+    def _initialize(self):
         self.conn = sqlite3.connect(os.path.join(generate_persist_dir(), 'images.db'), check_same_thread=False)
         self.cursor = self.conn.cursor()
         self.cursor.execute('''
@@ -35,11 +43,6 @@ class Database:
     def commit(self):
         self.conn.commit()
 
-    def close(self):
-        self.conn.close()
-
-    # TODO: use placeholders for the following methods
-    # TODO: add a parameter for commit
     def insert(self, table, values, list_=False, dict_=False, commit=True):
         if not dict_:
             self.cursor.execute(f'INSERT INTO {table} VALUES (?)', values)
@@ -113,3 +116,7 @@ class Database:
 
     def get_config(self, key):
         return self.select('config', ['value'], f'key = "{key}"')
+
+    def close(self):
+        self.conn.close()
+        Database._instance = None
