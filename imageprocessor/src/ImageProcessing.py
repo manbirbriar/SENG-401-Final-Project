@@ -16,16 +16,14 @@ TEMP_DIR = generate_temp_dir()
 class Parameter:
     exposure = 1
     contrast = 0
-    white_levels = 0
     highlights = 0
     shadows = 0
     black_levels = 0
     saturation = 0
 
-    def __init__(self, exposure=0, contrast=0, white_levels=0, highlights=0, shadows=0, black_levels=0, saturation=0):
+    def __init__(self, exposure=0, contrast=0, highlights=0, shadows=0, black_levels=0, saturation=0):
         self.exposure = exposure
         self.contrast = contrast
-        self.white_levels = white_levels
         self.highlights = highlights
         self.shadows = shadows
         self.black_levels = black_levels
@@ -34,6 +32,7 @@ class Parameter:
 
 class RawImage:
     def __init__(self, file_path):
+        self.file_path = file_path
         with rawpy.imread(file_path) as raw_file:
             self.raw_image = raw_file.postprocess(
                 use_camera_wb=True,
@@ -58,7 +57,7 @@ class RawImage:
         # contrast
         image = self.adjust_contrast(image, params.contrast)
         # highlights, shadows
-        # white_levels, black_levels
+        # black_levels
         # saturation
         return image
 

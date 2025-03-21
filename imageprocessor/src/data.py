@@ -7,6 +7,25 @@ class Database:
     def __init__(self):
         self.conn = sqlite3.connect(os.path.join(generate_persist_dir(), 'images.db'), check_same_thread=False)
         self.cursor = self.conn.cursor()
+        self.cursor.execute('''
+                CREATE TABLE IF NOT EXISTS images (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    path TEXT UNIQUE NOT NULL,
+                    exposure FLOAT DEFAULT 0,
+                    contrast INTEGER DEFAULT 0,
+                    highlights INTEGER DEFAULT 0,
+                    shadows INTEGER DEFAULT 0,
+                    black_levels INTEGER DEFAULT 0,
+                    saturation INTEGER DEFAULT 0
+                )
+            ''')
+        self.cursor.execute('''
+                CREATE TABLE IF NOT EXISTS CONFIG (
+                key TEXT NOT NULL PRIMARY KEY,
+                value TEXT
+                )
+            ''')
+        self.conn.commit()
 
     def execute(self, query, replacement=None):
         if replacement is None:
@@ -59,8 +78,11 @@ class Database:
         else:
             return self.cursor.execute(f'SELECT {", ".join(columns)} FROM {table}').fetchall()
 
-    def update(self, table, column: list, value: list, condition, commit=True):
-        self.cursor.execute(f'UPDATE {table} SET {", ".join([f"{column[i]} = {value[i]}" for i in range(len(column))])} WHERE {condition}')
+    def update(self, table, column: list, value: list, condition, replacement=None, commit=True):
+        if replacement is None:
+            self.cursor.execute(f'UPDATE {table} SET {", ".join([f"{column[i]} = {value[i]}" for i in range(len(column))])} WHERE {condition}')
+        else:
+            self.cursor.execute(f'UPDATE {table} SET {", ".join([f"{column[i]} = {value[i]}" for i in range(len(column))])} WHERE {condition}', replacement)
         if commit:
             self.commit()
 
@@ -81,4 +103,14 @@ class Database:
         return ids, new_images
 
     def get_params(self, image_id):
-        return self.select('images', ['exposure', 'contrast', 'white_levels', 'highlights', 'shadows', 'black_levels', 'saturation'], 'id = ?', (image_id,))
+        return self.select('images', ['exposure', 'contrast', 'highlights', 'shadows', 'black_levels', 'saturation'], 'id = ?', (image_id,))
+
+    def set_config(self, key, value):
+        exists = self.select('config', ['value'], 'key = ?', (key,))
+        if exists:
+            self.update('config', ['value'], [value], f'key = "{key}"')
+        else:
+            self.insert('config', {'key': key, 'value': value}, dict_=True)
+
+    def get_config(self, key):
+        return self.select('config', ['value'], f'key = "{key}"')

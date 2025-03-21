@@ -2,6 +2,7 @@ import os
 import shutil
 
 import flet as ft
+from PIL import Image
 
 from config import *
 from ImageProcessing import RawImage, EmptyImage, ImageProcessorThread, Parameter, create_thumbnail
@@ -52,11 +53,10 @@ def create_control_area(page):
     return status_text_box, status_container, prompt_text_box, feedback_text_box, submit_button, compare_button, apply_button
 
 
-def create_param_object(exposure_slider, contrast_slider, white_levels_slider, highlights_slider, shadows_slider, black_levels_slider, saturation_slider):
+def create_param_object(exposure_slider, contrast_slider, highlights_slider, shadows_slider, black_levels_slider, saturation_slider):
     return Parameter(
         exposure=2**exposure_slider.value,
         contrast=contrast_slider.value,
-        white_levels=white_levels_slider.value,
         highlights=highlights_slider.value,
         shadows=shadows_slider.value,
         black_levels=black_levels_slider.value,
@@ -96,15 +96,27 @@ def main(page):
     # library
     image_paths = {}
     # edit
-    global image_object
+    global image_object, current_image_id
     image_object = EmptyImage()
+    current_image_id = 0
     params = Parameter()
     photo_area = None
+    # slider and value box
+    exposure_slider = None
+    contrast_slider = None
+    highlights_slider = None
+    shadows_slider = None
+    black_levels_slider = None
+    exposure_slider_value = None
+    contrast_slider_value = None
+    highlights_slider_value = None
+    shadows_slider_value = None
+    black_levels_slider_value = None
 
     def export_button_click(e, image_id):
         image_path = image_paths[image_id]
         # TODO: check if raw image exists, pop up alert if not
-        params_sql = database.execute('SELECT exposure, contrast, white_levels, highlights, shadows, black_levels, saturation FROM images WHERE id = ?', (image_id,)).fetchone()
+        params_sql = database.execute('SELECT exposure, contrast, highlights, shadows, black_levels, saturation FROM images WHERE id = ?', (image_id,)).fetchone()
         params = Parameter(*params_sql)
         image_object = RawImage(image_path)
         image = image_object.render_image(params)
@@ -166,38 +178,58 @@ def main(page):
             image_paths[id_] = new_image_path
             # add image to library page
             image_grid.controls.append(create_image_selector_in_library(id_))
-        # switch to library page
-        page.go('/library')
+        database.set_config('last_opened', '"None"')
         e.page.update()
 
     def open_edit_tab(page, image_id):
-        global image_object
+        global image_object, current_image_id
+        current_image_id = image_id
         image_path = database.execute('SELECT path FROM images WHERE id = ?', (image_id,)).fetchone()
         if image_path is None:
             # TODO: alert
             return
         image_path = image_path[0]
         image_object = RawImage(image_path)
-        exposure, contrast, white_levels, highlights, shadows, black_levels, saturation = database.execute(
-            'SELECT exposure, contrast, white_levels, highlights, shadows, black_levels, saturation FROM images WHERE id = ?',
+        exposure, contrast, highlights, shadows, black_levels, saturation = database.execute(
+            'SELECT exposure, contrast, highlights, shadows, black_levels, saturation FROM images WHERE id = ?',
             (image_id,)).fetchone()
         params = Parameter(
             exposure=exposure,
             contrast=contrast,
-            white_levels=white_levels,
             highlights=highlights,
             shadows=shadows,
             black_levels=black_levels,
+            saturation=saturation
         )
+
+        exposure_slider.value = exposure
+        contrast_slider.value = contrast
+        highlights_slider.value = highlights
+        shadows_slider.value = shadows
+        black_levels_slider.value = black_levels
+        saturation_slider.value = saturation
+        exposure_slider_value.value = str(exposure)
+        contrast_slider_value.value = str(contrast)
+        highlights_slider_value.value = str(highlights)
+        shadows_slider_value.value = str(shadows)
+        black_levels_slider_value.value = str(black_levels)
+        saturation_slider_value.value = str(saturation)
+
         page.go('/edit')
+        database.set_config('last_opened', image_id)
         processed_image = image_processor_thread.process_image(image_object, params, photo_area)
         return image_object, processed_image
 
-    def onchange_parameter(e, current_param, text, params, img_container, round_=None):
-        text.value = str(round(e.control.value, round_))
-        params.__setattr__(current_param, e.control.value)
+    def onchange_parameter(e, current_param_name, value_text_box, params, img_container, round_=None):
+        value_text_box.value = str(round(e.control.value, round_))
+        params.__setattr__(current_param_name, e.control.value)
         image_processor_thread.process_image(image_object, params, img_container)
         e.page.update()
+
+    def on_change_end_parameter(e, current_param_name, params, round_=None):
+        value = str(round(e.control.value, round_))
+        params.__setattr__(current_param_name, e.control.value)
+        database.update(table='images', column=[current_param_name], value=[value], condition=f'id = {current_image_id}')
 
     def create_parameter_sliders(img_container):
         height = 30
@@ -214,8 +246,11 @@ def main(page):
             max=5,
             value=0,
             height=height,
-            on_change=lambda e: onchange_parameter(e, 'exposure', exposure_slider_value,
-                                                   **change_parameter_text_common_params, round_=2),
+            on_change=lambda e: onchange_parameter(
+                e, 'exposure', exposure_slider_value,
+                **change_parameter_text_common_params, round_=2
+            ),
+            on_change_end=lambda e: on_change_end_parameter(e, 'exposure', params, round_=2)
         )
 
         common_params = {
@@ -227,64 +262,71 @@ def main(page):
         contrast_text = ft.Text('Contrast', height=height)
         contrast_slider = ft.Slider(
             **common_params,
-            on_change=lambda e: onchange_parameter(e, 'contrast', contrast_slider_value,
-                                                   **change_parameter_text_common_params)
+            on_change=lambda e: onchange_parameter(
+                e, 'contrast', contrast_slider_value,
+                **change_parameter_text_common_params
+            ),
+            on_change_end=lambda e: on_change_end_parameter(e, 'contrast', params)
         )
         contrast_slider_value = ft.Text('0', height=height)
-
-        white_levels_text = ft.Text('White Levels', height=height)
-        white_levels_slider = ft.Slider(
-            **common_params,
-            on_change=lambda e: onchange_parameter(e, 'white_levels', white_levels_slider_value,
-                                                   **change_parameter_text_common_params)
-        )
-        white_levels_slider_value = ft.Text('0', height=height)
 
         highlights_text = ft.Text('Highlights', height=height)
         highlights_slider = ft.Slider(
             **common_params,
-            on_change=lambda e: onchange_parameter(e, 'highlights', highlights_slider_value,
-                                                   **change_parameter_text_common_params)
+            on_change=lambda e: onchange_parameter(
+                e, 'highlights', highlights_slider_value,
+                **change_parameter_text_common_params
+            ),
+            on_change_end=lambda e: on_change_end_parameter(e, 'highlights', params)
         )
         highlights_slider_value = ft.Text('0', height=height)
 
         shadows_text = ft.Text('Shadows', height=height)
         shadows_slider = ft.Slider(
             **common_params,
-            on_change=lambda e: onchange_parameter(e, 'shadows', shadows_slider_value,
-                                                   **change_parameter_text_common_params)
+            on_change=lambda e: onchange_parameter(
+                e, 'shadows', shadows_slider_value,
+                **change_parameter_text_common_params
+            ),
+            on_change_end=lambda e: on_change_end_parameter(e, 'shadows', params)
         )
         shadows_slider_value = ft.Text('0', height=height)
 
         black_levels_text = ft.Text('Black Levels', height=height)
         black_levels_slider = ft.Slider(
             **common_params,
-            on_change=lambda e: onchange_parameter(e, 'black_levels', black_levels_slider_value,
-                                                   **change_parameter_text_common_params)
+            on_change=lambda e: onchange_parameter(
+                e, 'black_levels', black_levels_slider_value,
+                **change_parameter_text_common_params
+            ),
+            on_change_end=lambda e: on_change_end_parameter(e, 'black_levels', params)
         )
         black_levels_slider_value = ft.Text('0', height=height)
 
         saturation_text = ft.Text('Saturation', height=height)
         saturation_slider = ft.Slider(
             **common_params,
-            on_change=lambda e: onchange_parameter(e, 'saturation', saturation_slider_value,
-                                                   **change_parameter_text_common_params)
+            on_change=lambda e: onchange_parameter(
+                e, 'saturation', saturation_slider_value,
+                **change_parameter_text_common_params
+            ),
+            on_change_end=lambda e: on_change_end_parameter(e, 'saturation', params)
         )
         saturation_slider_value = ft.Text('0', height=height)
 
         # Create columns
         name_column = ft.Column(
-            [exposure_text, contrast_text, white_levels_text, highlights_text, shadows_text, black_levels_text,
+            [exposure_text, contrast_text, highlights_text, shadows_text, black_levels_text,
              saturation_text],
             width=90,
             alignment=ft.MainAxisAlignment.START
         )
         slider_column = ft.Column(
-            [exposure_slider, contrast_slider, white_levels_slider, highlights_slider, shadows_slider,
+            [exposure_slider, contrast_slider, highlights_slider, shadows_slider,
              black_levels_slider, saturation_slider],
         )
         value_column = ft.Column(
-            [exposure_slider_value, contrast_slider_value, white_levels_slider_value, highlights_slider_value,
+            [exposure_slider_value, contrast_slider_value, highlights_slider_value,
              shadows_slider_value, black_levels_slider_value, saturation_slider_value],
             width=40,
         )
@@ -294,34 +336,11 @@ def main(page):
         )
         return (
             parameter_area,
-            exposure_slider, contrast_slider, white_levels_slider, highlights_slider, shadows_slider,
-            black_levels_slider,
-            exposure_slider_value, contrast_slider_value, white_levels_slider_value, highlights_slider_value,
-            shadows_slider_value, black_levels_slider_value
+            exposure_slider, contrast_slider, highlights_slider, shadows_slider,
+            black_levels_slider,saturation_slider,
+            exposure_slider_value, contrast_slider_value, highlights_slider_value,
+            shadows_slider_value, black_levels_slider_value, saturation_slider_value
         )
-
-    # Database
-    # database.drop('images')
-    database.execute('''
-        CREATE TABLE IF NOT EXISTS images (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            path TEXT UNIQUE NOT NULL,
-            exposure FLOAT DEFAULT 0,
-            contrast INTEGER DEFAULT 0,
-            white_levels INTEGER DEFAULT 0,
-            highlights INTEGER DEFAULT 0,
-            shadows INTEGER DEFAULT 0,
-            black_levels INTEGER DEFAULT 0,
-            saturation INTEGER DEFAULT 0
-        )
-    ''')
-    database.execute('''
-        CREATE TABLE IF NOT EXISTS CONFIG (
-        key TEXT NOT NULL PRIMARY KEY,
-        value TEXT
-        )
-    ''')
-    database.commit()
 
     # app name
     page.title = APP_NAME
@@ -335,10 +354,17 @@ def main(page):
     page.window.top = 0
     page.window.left = 0
 
+    def go_from_edit_to_library(e):
+        page.go("/library")
+        database.set_config('last_opened', '"None"')
     # App bar
     library_page_button = ft.ElevatedButton(
         text='Library',
-        on_click=lambda e: page.go("/library")
+        on_click=go_from_edit_to_library
+    )
+    edit_page_export_button = ft.TextButton(
+        text='Export',
+        on_click=lambda e: Image.open(os.path.join(TEMP_DIR, 'temp.tif')).save(image_object.file_path+'.jpeg')
     )
     # Photo area
     image_object, photo_area = create_photo_area(
@@ -348,9 +374,9 @@ def main(page):
     )
     # Parameter area
     (parameter_area,
-     exposure_slider, contrast_slider, white_levels_slider, highlights_slider, shadows_slider, black_levels_slider,
-     exposure_slider_value, contrast_slider_value, white_levels_slider_value, highlights_slider_value,
-     shadows_slider_value, black_levels_slider_value
+     exposure_slider, contrast_slider, highlights_slider, shadows_slider, black_levels_slider, saturation_slider,
+     exposure_slider_value, contrast_slider_value, highlights_slider_value,
+     shadows_slider_value, black_levels_slider_value, saturation_slider_value
      ) = create_parameter_sliders(photo_area)
 
     # Control area
@@ -378,7 +404,7 @@ def main(page):
     # Main area
     edit_page = ft.Column(
         controls=[
-            library_page_button,
+            ft.Row([library_page_button, edit_page_export_button]),
             ft.Row(
                 [photo_area, edit_area],
                 vertical_alignment=ft.CrossAxisAlignment.START
@@ -406,7 +432,7 @@ def main(page):
         image_paths[i[0]] = i[1]
         image_grid.controls.append(create_image_selector_in_library(i[0]))
     library_page = ft.Column([
-        import_button, input_file_picker,
+        input_file_picker, import_button,
         image_grid
     ])
     # image_grid.controls.append()
@@ -423,10 +449,12 @@ def main(page):
     page.on_route_change = route_change
     page.on_view_pop = view_pop
     page.go('/library')
-    last_opened = database.execute('SELECT value FROM CONFIG WHERE key = "last_opened"').fetchone()
-    if last_opened is not None:
-        last_opened_id = last_opened[0]
-        image_object, _ = open_edit_tab(page, last_opened_id)
+    last_opened = database.get_config('last_opened')
+    if last_opened:
+        last_opened = last_opened[0][0]
+        if last_opened != 'None':
+            current_image_id = int(last_opened)
+            image_object, _ = open_edit_tab(page, current_image_id)
     page.update()
 
 if __name__ == '__main__':
