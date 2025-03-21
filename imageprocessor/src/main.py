@@ -42,7 +42,7 @@ def create_control_area(page):
         ]
     )
     prompt_text_box = ft.TextField(
-        label='Prompt',
+        label='Describe how you want to improve the image',
         multiline=True,
         # width=200
     )
@@ -113,14 +113,15 @@ def main(page):
     shadows_slider_value = None
     black_levels_slider_value = None
 
-    def export_button_click(e, image_id):
+    def export_button_click(e, image_id):  # export button in library view
         image_path = image_paths[image_id]
         # TODO: check if raw image exists, pop up alert if not
         params_sql = database.execute('SELECT exposure, contrast, highlights, shadows, black_levels, saturation FROM images WHERE id = ?', (image_id,)).fetchone()
         params = Parameter(*params_sql)
         image_object = RawImage(image_path)
         image = image_object.render_image(params)
-        image_object.save_image(image, image_path+'.jpg')
+
+        RawImage.save_image(image, image_path+'.jpg')
         e.page.update()
 
     def delete_button_click(e, image_id):
@@ -413,6 +414,9 @@ def main(page):
     )
     # Library
     input_file_picker = ft.FilePicker(
+        on_result=file_selected,
+    )
+    output_folder_picker = ft.FilePicker(
         on_result=file_selected,
     )
     import_button = ft.TextButton(

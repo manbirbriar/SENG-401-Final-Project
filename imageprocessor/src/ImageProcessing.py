@@ -108,7 +108,7 @@ class ImageProcessorThread(threading.Thread):
                 need_update_image = False
                 image = self.image_object.render_image(self.params)
                 temp_path = os.path.join(TEMP_DIR, 'temp.tif')
-                self.image_object.save_image(image, temp_path)
+                RawImage.save_image(image, temp_path)
                 with open(temp_path, 'rb') as f:
                     base64_str = base64.b64encode(f.read()).decode('utf-8')
                 if self.image_container.content is None:
