@@ -10,6 +10,25 @@ from ImageProcessing import Parameter
 from directory_management import generate_temp_dir
 
 
+def _generate_prompt(prompt: str, parameters: Parameter) -> str:
+    """Generate structured prompt for the API call."""
+    return f"""
+    Analyze this image: I want {prompt}; 
+    Current parameters are {{exposure: {parameters.exposure}, contrast: {parameters.contrast}, 
+    highlights: {parameters.highlights}, shadows: {parameters.shadows}, 
+    black_levels: {parameters.black_levels}}} and return a JSON object with the following fields:
+    {{
+      "improvement_suggestions": "A couple of sentences on how to improve the image.",
+      "exposure_adjustment": "A float number between -5 and 5 indicating the recommended stops of exposure adjustment.",
+      "contrast_adjustment": "An integer between -100 and 100 indicating the recommended contrast adjustment.",
+      "highlight_adjustment": "An integer between 0 and 100 indicating the recommended highlight adjustment.",
+      "shadows_adjustment": "An integer between 0 and 100 indicating the recommended shadows adjustment.",
+      "black_levels_adjustment": "An integer between 0 and 100 indicating the recommended black levels adjustment."
+    }}
+    Ensure the response is valid JSON and nothing else.
+    """
+
+
 class ImageAnalyzer:
     def __init__(self):
         """Initialize the ImageAnalyzer with API key and temp directory."""
@@ -30,30 +49,12 @@ class ImageAnalyzer:
         Image.open(tiff_path).save(jpeg_path)
         return jpeg_path
 
-    def _generate_prompt(self, prompt: str, parameters: Parameter) -> str:
-        """Generate structured prompt for the API call."""
-        return f"""
-        Analyze this image: I want {prompt}; 
-        Current parameters are {{exposure: {parameters.exposure}, contrast: {parameters.contrast}, 
-        highlights: {parameters.highlights}, shadows: {parameters.shadows}, 
-        black_levels: {parameters.black_levels}}} and return a JSON object with the following fields:
-        {{
-          "improvement_suggestions": "A couple of sentences on how to improve the image.",
-          "exposure_adjustment": "A float number between -5 and 5 indicating the recommended stops of exposure adjustment.",
-          "contrast_adjustment": "An integer between -100 and 100 indicating the recommended contrast adjustment.",
-          "highlight_adjustment": "An integer between 0 and 100 indicating the recommended highlight adjustment.",
-          "shadows_adjustment": "An integer between 0 and 100 indicating the recommended shadows adjustment.",
-          "black_levels_adjustment": "An integer between 0 and 100 indicating the recommended black levels adjustment."
-        }}
-        Ensure the response is valid JSON and nothing else.
-        """
-
     def api_call(self, prompt: str, parameters: Parameter):
         """Make an API call with the given prompt and image parameters."""
         image_path = self._prepare_image()
         image = Image.open(image_path)
 
-        structured_prompt = self._generate_prompt(prompt, parameters)
+        structured_prompt = _generate_prompt(prompt, parameters)
 
         # Generate response
         try:
