@@ -55,6 +55,7 @@ def create_control_area(page):
     return status_text_box, status_container, prompt_text_box, feedback_text_box, submit_button, compare_button, reset_button
 
 
+image_analyzer = ai_integration.ImageAnalyzer()
 def submit_button_click(
         e, prompt_text_box, params, status_text_box, feedback_text_box,
         exposure_slider, contrast_slider, highlights_slider,
@@ -64,7 +65,7 @@ def submit_button_click(
     # Call API
     status_text_box.value = 'Sending image to Google AI Studio'
     e.page.update()
-    response = ai_integration.api_call(prompt_text_box.value, params)
+    response = image_analyzer.api_call(prompt_text_box.value, params)
     if response['success']:
         feedback_text_box.value = response['feedback']
         new_params = response['new_parameters']
