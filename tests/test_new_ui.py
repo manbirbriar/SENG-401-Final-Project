@@ -37,7 +37,7 @@ def test_create_control_area():
     assert isinstance(submit_button, ft.TextButton), "Submit button should be an instance of ft.TextButton"
     assert isinstance(compare_button, ft.TextButton), "Compare button should be an instance of ft.TextButton"
     assert isinstance(apply_button, ft.TextButton), "Apply button should be an instance of ft.TextButton"
-    assert prompt_text_box.label == 'Prompt', "Prompt text box label should be 'Prompt'"
+    assert prompt_text_box.label == 'Describe how you want to improve the image', "Prompt text box label should be 'Describe how you want to improve the image'"
     assert prompt_text_box.multiline is True, "Prompt text box should be multiline"
     assert status_text_box.value == 'Ready', "Initial text of status text box should be 'Ready'"
 
