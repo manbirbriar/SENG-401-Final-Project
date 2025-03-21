@@ -201,20 +201,36 @@ class EmptyImage(RawImage):
         self.raw_image = np.zeros((256, 256, 3), dtype=np.float32)
 
 class ImageProcessorThread(threading.Thread):
-    page = None
-    image_object = None
-    params = None
-    image_container = None
-    generate_original = False
-    need_update_image = False
+    _instance = None
+    _lock = threading.Lock()
 
-    def __init__(self):
-        super().__init__()
-        self.event = threading.Event()
-        self.daemon = True  # Ensure the thread exits when the main program exits
-        self.start()
+    def __new__(cls, *args, **kwargs):
+        """Ensure strict singleton behavior."""
+        if not cls._instance:
+            with cls._lock:
+                if not cls._instance:
+                    cls._instance = super(ImageProcessorThread, cls).__new__(cls)
+                    cls._instance._initialize()  # Ensure attributes are initialized once
+        return cls._instance
+
+    def _initialize(self):
+        """Custom initialization logic to avoid missing attributes."""
+        if self._instance is not None:
+            super().__init__()
+            self.event = threading.Event()
+            self.daemon = True
+            self.page = None
+            self.image_object = None
+            self.params = None
+            self.image_container = None
+            self.generate_original = False
+            self.need_update_image = False
+            self.start()
+
+            self._initialized = True  # Prevent re-initialization
 
     def run(self):
+        """Thread execution loop."""
         while True:
             self.event.wait()  # Wait for the event to be set
             while self.need_update_image:
@@ -222,29 +238,35 @@ class ImageProcessorThread(threading.Thread):
                 image = self.image_object.render_image(self.params)
                 target_path = os.path.join(TEMP_DIR, 'temp.tif')
                 RawImage.save_image(image, target_path)
+
                 with open(target_path, 'rb') as file:
                     encoded_string = base64.b64encode(file.read()).decode('utf-8')
+
                 if self.image_container.content is None:
                     self.image_container.content = ft.Image(
                         src_base64=encoded_string, key='temp'
                     )
                 else:
                     self.image_container.content.src_base64 = encoded_string
+
                 self.page.update()
+
                 if self.generate_original:
                     original_params = Parameter()
                     original_image = self.image_object.render_image(original_params)
-                    target_path = os.path.join(TEMP_DIR, 'original.tif')
-                    RawImage.save_image(original_image, target_path)
+                    original_target = os.path.join(TEMP_DIR, 'original.tif')
+                    RawImage.save_image(original_image, original_target)
+
             self.event.clear()  # Clear the event after processing
 
     def process_image(self, image_object: RawImage, params, image_container, generate_original=False):
+        """Process image using the singleton thread."""
         self.image_object = image_object
         self.params = params
         self.image_container = image_container
         self.generate_original = generate_original
         self.need_update_image = True
-        self.event.set()  # Set the event to start processing
+        self.event.set()  # Trigger image processing
 
 
 def create_thumbnail(image_path, thumbnail_path):
