@@ -75,6 +75,15 @@ def submit_button_click(
         contrast_slider_value.value = new_params.contrast
         highlights_slider.value = new_params.highlights
         highlights_slider_value.value = new_params.highlights
+        contrast_slider.value = new_params.shadows
+        contrast_slider_value.value = new_params.shadows
+        highlights_slider.value = new_params.black_levels
+        highlights_slider_value.value = new_params.black_levels
+        database.update(table='images', column=['contrast'], value=[new_params.contrast], condition=f'id = {current_image_id}')
+        database.update(table='images', column=['exposure'], value=[new_params.exposure], condition=f'id = {current_image_id}')
+        database.update(table='images', column=['highlights'], value=[new_params.highlights], condition=f'id = {current_image_id}')
+        database.update(table='images', column=['shadows'], value=[new_params.shadows], condition=f'id = {current_image_id}')
+        database.update(table='images', column=['black_levels'], value=[new_params.black_levels], condition=f'id = {current_image_id}')
         image_processor_thread.process_image(image_object, new_params, img_container)
     else:
         status_text_box.value = 'Failed'
@@ -374,6 +383,11 @@ def main(page):
         shadows_slider_value.value = '0'
         black_levels_slider_value.value = '0'
         params.reset_parameters()
+        database.update(table='images', column=['contrast'], value=[0], condition=f'id = {current_image_id}')
+        database.update(table='images', column=['exposure'], value=[0], condition=f'id = {current_image_id}')
+        database.update(table='images', column=['highlights'], value=[0], condition=f'id = {current_image_id}')
+        database.update(table='images', column=['shadows'], value=[0], condition=f'id = {current_image_id}')
+        database.update(table='images', column=['black_levels'], value=[0], condition=f'id = {current_image_id}')
         page.update()
         image_processor_thread.process_image(image_object, params, photo_area)
 
@@ -493,7 +507,7 @@ def main(page):
     last_opened = database.get_config('last_opened')
     if last_opened:
         last_opened = last_opened[0][0]
-        if last_opened != 'None':
+        if last_opened != 'None' or last_opened != '"None"':
             current_image_id = int(last_opened)
             image_object = open_edit_tab(page, current_image_id)
     # first time open
