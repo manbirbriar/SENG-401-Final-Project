@@ -13,3 +13,5 @@ To run the RAW Image processor application on your computer without using the ex
 The application accepts raw image files only and exports them as jpeg, use the images in the sample images folder to test it out for yourself.
 
 To run the tests simply run ```pytest``` in your terminal from your folder containing the project, you will need to ```pip install pytest```. 
+
+link to uml: https://drive.google.com/file/d/1LToHPn-f3IeUVpPsEWQXLye6E9LZXuPK/view?usp=sharing
