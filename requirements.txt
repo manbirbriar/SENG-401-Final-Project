@@ -6,3 +6,5 @@ python-dotenv~=1.0.1
 rawpy~=0.24.0
 opencv-python~=4.11.0.86
 httpx~=0.28.1
+pytest
+pytest-mock

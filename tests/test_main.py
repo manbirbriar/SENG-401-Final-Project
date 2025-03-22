@@ -1,10 +1,7 @@
 import sys
 import pytest
-import numpy as np
-from PIL import Image
 import os
 import flet as ft
-import rawpy
 from unittest.mock import Mock, patch
 
 sys.path.append('imageprocessor/src')

@@ -1,16 +1,8 @@
 import sys
-import pytest
-import numpy as np
-from PIL import Image
-import os
-import flet as ft
-import rawpy
-from unittest.mock import Mock, patch
-
+from unittest.mock import patch
 
 sys.path.append('imageprocessor/src')
 
-from main import create_control_area
 from directory_management import *
 
 #test generate_persist_dir

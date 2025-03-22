@@ -1,5 +1,4 @@
 import pytest
-import sqlite3
 import sys
 sys.path.append('imageprocessor/src')
 
