@@ -16,11 +16,11 @@ def test_generate_persist_dir_windows(mock_expanduser):
 
 
 @patch("os.name", "posix")  
-@patch("os.path.expanduser", return_value="\\home\\testuser")  
+@patch("os.path.expanduser", return_value="/home/testuser")  
 def test_generate_persist_dir_posix(mock_expanduser):
     persist_dir = generate_persist_dir()
 
-    assert persist_dir == "\\home\\testuser\\.config\\AI RAW Image Processor", "Incorrect path for macOS/Linux"
+    assert persist_dir == "/home/testuser/.config/AI RAW Image Processor", "Incorrect path for macOS/Linux"
 
 #test create_persist_dir
 
