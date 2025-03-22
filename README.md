@@ -15,3 +15,5 @@ The application accepts raw image files only and exports them as jpeg, use the i
 To run the tests simply run ```pytest``` in your terminal from your folder containing the project, you will need to ```pip install pytest```. 
 
 link to uml: https://drive.google.com/file/d/1LToHPn-f3IeUVpPsEWQXLye6E9LZXuPK/view?usp=sharing
+
+In order to package the application go to ai_integration file and put your api key into ```self.client = genai.Client(api_key=)``` then you must cd to the src directory and run ```flet pack main.py```
