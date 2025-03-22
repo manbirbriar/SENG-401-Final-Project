@@ -93,7 +93,7 @@ class Database:
         Args:
             table (str): The table name where data will be inserted.
             values: The values to insert (format depends on list_ and dict_ flags).
-            list_ (bool): If True, `values` is expected to be a list of dictionaries.
+            list_ (bool): If True, `values` is expected to be a list of values/dictionaries.
             dict_ (bool): If True, `values` is expected to be a dictionary (or list of dictionaries)
                           mapping column names to their respective values.
             commit (bool): Whether to commit the transaction after inserting.
