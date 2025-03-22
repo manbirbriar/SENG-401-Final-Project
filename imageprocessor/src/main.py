@@ -513,17 +513,21 @@ def main(page):
         Args:
             e: The event object triggered by the reset action.
         """
+        # Set slider value
         exposure_slider.value = 0
         contrast_slider.value = 0
         highlights_slider.value = 0
         shadows_slider.value = 0
         black_levels_slider.value = 0
+        # Set slider text box value
         exposure_slider_value.value = '0'
         contrast_slider_value.value = '0'
         highlights_slider_value.value = '0'
         shadows_slider_value.value = '0'
         black_levels_slider_value.value = '0'
+        # reset param object
         params.reset_parameters()
+        # update database
         database.update(table='images', column=['contrast'], value=[0], condition=f'id = {current_image_id}')
         database.update(table='images', column=['exposure'], value=[0], condition=f'id = {current_image_id}')
         database.update(table='images', column=['highlights'], value=[0], condition=f'id = {current_image_id}')
@@ -539,8 +543,6 @@ def main(page):
     # Window
     page.window.width = 1250
     page.window.height = 1000
-    # page.window.min_height = 400
-    # page.window.min_width = 1215
     page.window.top = 0
     page.window.left = 0
 
